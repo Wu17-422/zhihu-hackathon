@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "犀利评手 · 知乎评论逻辑分析",
   "version": "1.0.0",
-  "description": "知乎评论区 AI 裁判：逻辑分析、立场比例、相关帖子、思维导图、写评论实时润色",
+  "description": "知乎评论区 AI 裁判：逻辑分析、立场比例、思维导图、写评论实时润色、故事知识",
   "content_scripts": [
     {
       "matches": [
@@ -11,12 +11,18 @@
         "http://localhost/*",
         "http://127.0.0.1/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "connector.js",
+        "contentA.js",
+        "contentB.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "host_permissions": [
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "https://www.zhihu.com/*",
+    "https://zhuanlan.zhihu.com/*"
   ]
 }

@@ -28,12 +28,25 @@ from pathlib import Path
 
 import requests
 
-from prompt import (
-    build_mindmap_prompt,
-    build_polish_prompt,
-    build_prompt,
-    build_related_prompt,
-)
+# 两种跑法都要支持：
+#   uvicorn main:app（在 backend/ 里启动，正式跑法）→ 直接 import
+#   在 backend/ 里直接 python verify_zhida.py（调提示词）→ 同样 import
+try:
+    from prompt import (
+        build_camps_prompt,
+        build_mindmap_prompt,
+        build_polish_prompt,
+        build_prompt,
+        build_related_prompt,
+    )
+except ImportError:                     # 万一被当成包跑（backend.zhida）
+    from backend.prompt import (
+        build_camps_prompt,
+        build_mindmap_prompt,
+        build_polish_prompt,
+        build_prompt,
+        build_related_prompt,
+    )
 
 API_URL = "https://developer.zhihu.com/v1/chat/completions"
 
@@ -55,15 +68,31 @@ SECRET_FILE = Path(__file__).parent / "secret.txt"
 
 def _load_secret():
     """
-    优先读环境变量（start.bat 里粘的），没有就读同目录的 secret.txt。
+    按三条路依次找 key：
+      1. 环境变量 ZHIHU_ACCESS_SECRET（key 本身）
+      2. 环境变量 ZHIHU_SECRET_FILE（指向一个存 key 的文件，可以在项目外面）
+      3. 同目录的 secret.txt
 
-    为什么要留文件这条路：往 Windows 命令行里粘 40 位 token 太容易把手滑，
+    为什么要留文件这条路：往 Windows 命令行里粘 40 位 token 太容易手滑，
     2026-09-14 就粘成过 118 个字符（连文档里的说明文字一起复制了），报 401。
     存成文件可以反复打开核对、改起来也不用重启着试。
+
+    为什么加第 2 条：key 存在项目目录里，打包/分享时很容易连着一起发出去。
+    放在项目外面、用环境变量指过来，既保留了「文件可核对」的好处，又不会误传。
     """
     s = os.environ.get("ZHIHU_ACCESS_SECRET", "").strip()
     if s:
         return s
+
+    p = os.environ.get("ZHIHU_SECRET_FILE", "").strip().strip('"')
+    if p:
+        try:
+            f = Path(p)
+            if f.is_file():
+                return f.read_text(encoding="utf-8").strip()
+        except OSError:
+            pass  # 路径给错了就当没设，往下走 secret.txt
+
     if SECRET_FILE.exists():
         return SECRET_FILE.read_text(encoding="utf-8").strip()
     return ""
@@ -384,16 +413,115 @@ def zhida_chat(messages, model=MODEL, timeout=TIMEOUT):
         raise ZhidaError(f"返回结构不是预期格式：{resp.text[:300]}") from e
 
 
+def _repair_json(text):
+    """
+    尽最大努力把模型吐坏的 JSON 修回来。只修下面三类，不做通用容错：
+
+      1. 字符串内部裸露的双引号 —— 最常见的死因。
+         模型写「他说"这不可能"」时不转义，json 直接崩在那一行。
+         判断办法：在字符串里遇到 " 时往后看，跳过空白后如果不是 , : } ] 或结尾，
+         那它就不是收尾的引号，而是正文里的引号 → 补转义。
+      2. 尾随逗号 —— [1, 2, 3,] / {"a": 1,}
+      3. 被截断的尾巴 —— 生成到一半断了，把没闭合的引号和括号补上。
+
+    2026-09-15 实测遇到过一次 `Expecting ',' delimiter: line 36 column 6`，
+    同一个提示词重跑又是好的 —— 偶发，所以必须有这层兜底，
+    否则首屏会随机降级成假数据。
+    """
+    out = []
+    stack = []          # 记 { 和 [ 的嵌套顺序，用来补齐
+    in_str = False
+    esc = False
+    i, n = 0, len(text)
+
+    while i < n:
+        ch = text[i]
+
+        if in_str:
+            if esc:
+                esc = False
+                out.append(ch)
+            elif ch == "\\":
+                esc = True
+                out.append(ch)
+            elif ch == '"':
+                # 是收尾的引号，还是正文里没转义的引号？
+                j = i + 1
+                while j < n and text[j] in " \t\r\n":
+                    j += 1
+                if j >= n or text[j] in ",:}]":
+                    in_str = False
+                    out.append(ch)
+                else:
+                    out.append('\\"')        # 正文里的引号，补转义
+            elif ch in "\r\n":
+                out.append("\\n")            # 字符串里的裸换行也是非法的
+            else:
+                out.append(ch)
+            i += 1
+            continue
+
+        if ch == '"':
+            in_str = True
+            out.append(ch)
+        elif ch in "{[":
+            stack.append(ch)
+            out.append(ch)
+        elif ch in "}]":
+            # 去掉闭合括号前面的尾随逗号
+            k = len(out) - 1
+            while k >= 0 and out[k] in " \t\r\n":
+                k -= 1
+            if k >= 0 and out[k] == ",":
+                del out[k]
+            if stack:
+                stack.pop()
+            out.append(ch)
+        else:
+            out.append(ch)
+        i += 1
+
+    if in_str:
+        out.append('"')                      # 截断在字符串中间
+
+    # 补齐没闭合的括号（顺序要反着来）
+    while stack:
+        out.append("}" if stack.pop() == "{" else "]")
+
+    fixed = "".join(out)
+
+    # 收尾再扫一遍尾随逗号：, }  /  , ]
+    return re.sub(r",(\s*[}\]])", r"\1", fixed)
+
+
 def extract_json(text):
-    """模型有时候不自觉包一层 ```json，扒掉。"""
+    """
+    把模型返回的正文解析成 dict。
+
+    模型有时候不自觉包一层 ```json，扒掉；有时候 JSON 本身是坏的，
+    走 _repair_json 再试一次。两次都不行才抛 —— 抛出去调用方会降级到 mock。
+    """
     text = (text or "").strip()
     fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
     if fence:
         text = fence.group(1).strip()
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end != -1:
-        text = text[start:end + 1]
-    return json.loads(text)
+
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("返回里没有 JSON 对象（连 { 都没有）")
+
+    end = text.rfind("}")
+    if end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except ValueError:
+            pass  # 落到下面的修复分支
+
+    # 修复走「从第一个 { 到结尾」，不砍尾巴 —— 截断的情况要靠补括号救
+    try:
+        return json.loads(_repair_json(text[start:]))
+    except ValueError as e:
+        raise ValueError(f"JSON 解析失败（已尝试自动修复）：{e}") from e
 
 
 # ────────────────────────────────────────────────────────────
@@ -676,6 +804,136 @@ def stream_analyze(comments, model=MODEL):
     })
 
 
+def zhida_chat_collect(messages, model=MODEL, timeout=TIMEOUT):
+    """
+    和 zhida_chat 返回一样的东西（{"content", "reasoning_content"}），但走 stream=True，
+    在服务端一边生成、这边一边收，最后拼成整包再返回。
+
+    为什么非要绕这一圈：thinking 模型遇到大提示词会先「想」很久才吐第一个字。
+    非流式请求在这段时间里连接上一个字节都没有，直答的服务端会把它当死连接掐掉 ——
+    报 ConnectionResetError(10054)「远程主机强迫关闭了一个现有的连接」。
+
+    2026-09-15 实测：争议聚合（提示词 ~4KB、15 条评论）用非流式必挂，
+    跑几分钟后连接重置；换成流式后同一个提示词稳定返回。
+    逐条分析（stream_analyze）当初大概也是踩了同一个坑才写成流式的。
+
+    和 stream_analyze 的分工：那个是「边收边往前端推」，要一条条抠 JSON；
+    这个只是拿流式当保命手段，收齐了再交给调用方，调用方按整包 JSON 处理。
+    """
+    if not SECRET:
+        raise ZhidaError(
+            "没有读到 Access Secret。设环境变量 ZHIHU_ACCESS_SECRET，"
+            "或把 40 位 key 存进 secret.txt"
+        )
+
+    try:
+        resp = requests.post(
+            API_URL,
+            headers={
+                "Authorization": f"Bearer {SECRET}",
+                "X-Request-Timestamp": str(int(time.time())),
+                "Content-Type": "application/json",
+            },
+            json={"model": model, "messages": messages, "stream": True},
+            timeout=timeout,
+            stream=True,
+        )
+    except requests.RequestException as e:
+        note_error(f"网络请求失败：{e}")
+        raise ZhidaError(f"网络请求失败：{e}") from e
+
+    err = _http_error_text(resp)
+    if err:
+        resp.close()
+        note_error(err)
+        raise ZhidaError(err)
+
+    content, reasoning = "", ""
+    try:
+        for raw in resp.iter_lines(decode_unicode=False):
+            if not raw:
+                continue
+            line = raw.decode("utf-8", errors="replace")
+            if line.startswith(":"):
+                continue  # 心跳
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                chunk = json.loads(payload)
+            except ValueError:
+                continue  # 半截/非 JSON 的心跳
+
+            if isinstance(chunk.get("error"), dict):
+                msg = str(chunk["error"].get("message", "接口报错"))
+                note_error(msg)
+                raise ZhidaError(msg)
+
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0]
+            if choice.get("finish_reason") == "error":
+                note_error("生成中途出错（finish_reason=error）")
+                raise ZhidaError("生成中途出错（finish_reason=error）")
+
+            delta = choice.get("delta") or {}
+            if delta.get("reasoning_content"):
+                reasoning += delta["reasoning_content"]
+            if delta.get("content"):
+                content += delta["content"]
+    except requests.RequestException as e:
+        note_error(f"流中断：{e}")
+        raise ZhidaError(f"流中断：{e}") from e
+    finally:
+        resp.close()  # stream=True 的连接不会自己断
+
+    if not content.strip():
+        raise ZhidaError("流结束了但一个正文字符都没收到（模型可能只输出了思考过程）")
+
+    return {"content": content, "reasoning_content": reasoning}
+
+
+def _chat_json(messages, model=MODEL, timeout=TIMEOUT, tries=2, check=None):
+    """
+    调直答 → 解析 JSON。拿到的东西不可用时重试一次。
+
+    为什么要重试：模型偶发吐坏 JSON。2026-09-15 实测同一个提示词，
+    一次成功、一次报 `Expecting ',' delimiter: line 36 column 6`。
+    extract_json 已经会尽力修（见 _repair_json），修不动的就只能重来 ——
+    偶发失败重跑一次基本就好了，比让首屏随机降级成假数据划算。
+
+    额度：正常 1 次，重试才 2 次。只有「JSON 不可用」会重试；
+    401/403/429 这类是 ZhidaError，直接往上抛，不浪费额度重打。
+
+    check: 可选的校验函数，拿到 dict 后调一次，不合格就 raise ValueError
+           触发重试（比如争议聚合要求 camps 不能是空的）。
+    返回 (data, msg) —— msg 里还有 reasoning_content，调提示词时有用。
+    """
+    last = None
+    for attempt in range(1, tries + 1):
+        msg = zhida_chat_collect(messages, model=model, timeout=timeout)
+        try:
+            data = extract_json(msg.get("content", ""))
+            if check is not None:
+                check(data)
+            return data, msg
+        except ValueError as e:
+            last = e
+            note_error(f"第 {attempt}/{tries} 次返回不可用：{e}")
+
+    raise ValueError(f"连续 {tries} 次都没拿到可用的 JSON：{last}")
+
+
+def _check_camps(data):
+    """争议聚合的最低要求：得有阵营。空的话首屏就是空的，不如重试一次。"""
+    camps = data.get("camps")
+    if not isinstance(camps, list) or not camps:
+        raise ValueError("返回里没有 camps 数组（或者是空的）")
+
+
 def search_related_posts(dispute):
     """
     基于 core_dispute 调用知乎搜索 API，返回相关帖子推荐列表。
@@ -693,7 +951,9 @@ def search_related_posts(dispute):
                 "X-Request-Timestamp": str(int(time.time())),
                 "Content-Type": "application/json",
             },
-            params={"Query": query, "Count": 5},
+            # 多要几条再裁到 5：搜索经常把同一个问题下的多个回答各算一条，
+            # 去重后会凑不满 5 条。实测同一个问题连着出现过两次。
+            params={"Query": query, "Count": 12},
             timeout=30,
         )
         if resp.status_code != 200:
@@ -701,16 +961,44 @@ def search_related_posts(dispute):
         data = resp.json()
         d = data.get("Data") or {}
         items = d.get("Items") if isinstance(d, dict) else (d if isinstance(d, list) else [])
+
         result = []
+        seen_titles = set()
+        seen_questions = set()
+
         for item in items:
             title = _txt(item.get("Title"))
             if not title:
                 continue
+
+            # 「xxx？ - 知乎」这个后缀是噪音，界面上每条都带一遍很占地方
+            title = re.sub(r"\s*[-—]\s*知乎\s*$", "", title).strip()
+            if not title or title in seen_titles:
+                continue
+
+            url = _txt(item.get("Url") or "")
+
+            # 同一个问题下的不同回答算重复 —— 对用户来说点进去是同一个讨论。
+            # /question/{id}/answer/{id} 里只取 question 那段做去重键。
+            qid = ""
+            m = re.search(r"/question/(\d+)", url)
+            if m:
+                qid = m.group(1)
+                if qid in seen_questions:
+                    continue
+
+            seen_titles.add(title)
+            if qid:
+                seen_questions.add(qid)
+
             result.append({
                 "title": title,
                 "reason": _txt(item.get("ContentText") or "")[:100],
-                "url": _txt(item.get("Url") or ""),
+                "url": url,
             })
+            if len(result) >= 5:
+                break
+
         return result
     except Exception:
         return []
@@ -737,6 +1025,9 @@ def analyze_comments(comments, use_cache=True):
         if hit:
             out = dict(hit)
             out["_source"] = "cache"
+            # 同 aggregate_camps：缓存里不存下划线字段，_analyzed 要补回去，
+            # 否则「这次实际分析了几条」在缓存命中时是 undefined
+            out["_analyzed"] = len(out.get("analyses") or [])
             return out
 
     prepped = _preprocess(comments)
@@ -745,8 +1036,10 @@ def analyze_comments(comments, use_cache=True):
 
     numbered, back = _renumber(prepped)
 
-    msg = zhida_chat([{"role": "user", "content": build_prompt(numbered)}])
-    result = _map_back(extract_json(msg.get("content", "")), back)
+    # 走 _chat_json：30 条评论的提示词也有几 KB，非流式一样有被重置的风险。
+    # 这是前端流式失败后的整批兜底，它自己再挂一次就没退路了。
+    raw, msg = _chat_json([{"role": "user", "content": build_prompt(numbered)}])
+    result = _map_back(raw, back)
 
     # 推理过程留着，调提示词时有用
     result["_reasoning"] = (msg.get("reasoning_content") or "")[:2000]
@@ -797,16 +1090,24 @@ def _clean_polish(result):
         "viewpoint": txt(result.get("viewpoint")),
         "verdict": txt(result.get("verdict")),
         "flaws": flaws,
-        "rewrite": txt(result.get("rewrite")),
+        # topic 是给知乎搜索用的关键词，不直接显示给用户。
+        # 原来这里还有个 rewrite（帮用户改好的版本），2026-09-15 按需求去掉了 ——
+        # 改成推相关帖子：用户要的是判断和参考资料，不是代笔。
+        "topic": txt(result.get("topic")),
     }
 
 
 def polish_comment(draft, use_cache=True):
     """
     draft: 用户自己写的评论原文
-    返回: {"verdict": ..., "flaws": [{"name","quote","why"}], "rewrite": ...}
+    返回: {"viewpoint", "verdict", "flaws": [...], "topic", "related_posts": [...]}
 
-    失败抛 ZhidaError。调用方（main.py）负责降级到 mock。
+    这是「边写边看」的入口：用户打字停顿 1.5 秒就会调一次，所以用 fast 模型
+    （thinking 要 20 秒以上，实时场景等不起）。
+
+    相关帖子不在这里搜 —— 见下面的注释，它拆到 /api/related 去了。
+
+    失败抛 ZhidaError。调用方（板块B/backend/polish_handler.py）负责降级到 mock。
     """
     draft = (draft or "").strip()
     if not draft:
@@ -822,8 +1123,22 @@ def polish_comment(draft, use_cache=True):
             out["_source"] = "cache"
             return out
 
-    msg = zhida_chat([{"role": "user", "content": build_polish_prompt(draft)}])
-    result = _clean_polish(extract_json(msg.get("content", "")))
+    # 用 fast 模型：这是「边打字边看」的接口，停顿 1.5 秒就会调一次。
+    # thinking 模型要 20~40 秒，用户早就把话写完发出去了。
+    raw, msg = _chat_json(
+        [{"role": "user", "content": build_polish_prompt(draft)}],
+        model=MODEL_FAST,
+    )
+    result = _clean_polish(raw)
+
+    # 这里故意不搜相关帖子。
+    #
+    # 实测：模型 5.3s + 搜索 0.8s = 6.1s，而搜索必须等模型给出 topic 才能开始，
+    # 所以串着跑的话用户 6 秒内什么都看不到 —— 「实时」就不成立了。
+    # 拆成两个接口后，前端并行发：/api/related 约 1 秒就能把 5 条帖子铺出来，
+    # 逻辑漏洞晚几秒填进来。首屏从 6 秒降到 1 秒。
+    # topic 仍然返回，前端想用更准的关键词二次搜索时可以用。
+
     result["_source"] = "live"
     result["_draft"] = draft
 
@@ -890,18 +1205,270 @@ def generate_mindmap(title, content, use_cache=True):
             out["_source"] = "cache"
             return out
 
-    msg = zhida_chat(
-        [{"role": "user", "content": build_mindmap_prompt(title, content)}],
-        model=MODEL,
-        timeout=TIMEOUT,
+    # 同样走 _chat_json：正文最长 3000 字（MAX_CONTENT），
+    # thinking 模型在这种长度上一样会让非流式连接空等到被重置。
+    raw, msg = _chat_json(
+        [{"role": "user", "content": build_mindmap_prompt(title, content)}]
     )
-    raw = extract_json(msg.get("content", ""))
     result = {
         "title": title or "未命名",
         "mindmap": _validate_mindmap(raw.get("mindmap")),
         "_reasoning": (msg.get("reasoning_content") or "")[:2000],
         "_source": "live",
     }
+
+    _cache_put(key, {k: v for k, v in result.items() if not k.startswith("_")})
+
+    return result
+
+
+# ────────────────────────────────────────────────────────────
+# 第四个入口：争议地图 —— N 条评论 → 几个阵营 + 分歧根源 + 被埋没的好评论
+#
+# 这是产品首屏。逐条分析降级成点开才看的细节。
+# ────────────────────────────────────────────────────────────
+
+# 抽样上限。比逐条分析（MAX_COMMENTS=30）宽，因为归并阵营只需要看懂大意，
+# 不需要逐条产出，同样的上下文能塞更多条。
+MAX_CAMP_COMMENTS = 60
+
+# 单条评论截断长度。知乎有人写小作文，一条能顶十条。
+MAX_COMMENT_LEN = 300
+
+
+def _sample_for_camps(comments, cap=MAX_CAMP_COMMENTS):
+    """
+    给争议地图抽样。和 _preprocess 的区别很关键：
+
+    _preprocess 是按赞数排序后取 top-N —— 那样「被埋没的好评论」永远不可能出现在
+    样本里，因为它们的定义就是「赞数低、排在后面」。所以这里必须留一半配额给
+    低赞和靠后的评论，否则任务4 只能靠模型编。
+
+    返回 (样本, 去重后的总条数)。总条数要告诉模型「你看的是 N 条里抽的 M 条」。
+    """
+    seen, clean = set(), []
+    for i, c in enumerate(comments):
+        text = (c.get("text") or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        clean.append({
+            "id": c.get("id"),
+            "text": text[:MAX_COMMENT_LEN],
+            "likes": c.get("likes") or 0,
+            "author": (c.get("author") or "").strip(),
+            "floor": i + 1,          # 原始楼层：模型判断「靠后」要靠它
+        })
+
+    total = len(clean)
+    if total <= cap:
+        return clean, total
+
+    by_likes = sorted(clean, key=lambda c: c["likes"], reverse=True)
+    half = cap // 2
+    head = by_likes[:half]                       # 高赞：主流声音
+    rest = by_likes[half:]
+    # 剩下的按固定步长跨采，保证低赞区、靠后楼层都有代表进样本
+    step = max(1, len(rest) // max(1, cap - half))
+    tail = rest[::step][:cap - half]
+
+    out = head + tail
+    out.sort(key=lambda c: c["floor"])           # 还原成楼层顺序，读起来像原评论区
+    return out, total
+
+
+def _renumber_camps(sample):
+    """重编成 1..N，保留 likes/floor（模型要用它们判断「被埋没」）。"""
+    numbered, back = [], {}
+    for i, c in enumerate(sample, 1):
+        numbered.append({
+            "id": i, "text": c["text"],
+            "likes": c["likes"], "floor": c["floor"],
+        })
+        back[i] = c
+    return numbered, back
+
+
+def _clean_camps(raw, back):
+    """
+    校验模型返回的争议地图。要挡住三类脏数据：
+      - 编出不存在的评论编号
+      - 同一条评论被塞进多个阵营（阵营人数会算重）
+      - quote_id 不在自己的 comment_ids 里
+    """
+    used = set()
+    camps = []
+
+    for c in raw.get("camps") or []:
+        if not isinstance(c, dict):
+            continue
+        name = _txt(c.get("name"))
+        claim = _txt(c.get("claim"))
+        if not name or not claim:
+            continue
+
+        # 编号映射 + 跨阵营去重（先到先得，模型是按人数降序给的）
+        ids = []
+        for i in c.get("comment_ids") or []:
+            if isinstance(i, int) and i in back and i not in used:
+                used.add(i)
+                ids.append(i)
+        if not ids:
+            continue  # 一条评论都对不上，这个阵营是编的
+
+        q = c.get("quote_id")
+        if not (isinstance(q, int) and q in ids):
+            q = max(ids, key=lambda i: back[i]["likes"])  # 兜底：挑赞最高那条
+
+        grounds = [g for g in (_txt(x) for x in (c.get("grounds") or [])) if g][:4]
+
+        camps.append({
+            "name": name,
+            "claim": claim,
+            "stance": _norm_stance(c.get("stance")),
+            "grounds": grounds,
+            "size": len(ids),
+            "comment_ids": [back[i]["id"] for i in ids],
+            "quote": {
+                "id": back[q]["id"],
+                "text": back[q]["text"],
+                "author": back[q]["author"],
+                "likes": back[q]["likes"],
+            },
+        })
+
+    camps.sort(key=lambda c: c["size"], reverse=True)
+
+    # 占比按「归进阵营的评论数」算，不按样本总数 —— 否则归不进去的会稀释掉所有比例
+    placed = sum(c["size"] for c in camps) or 1
+    for c in camps:
+        c["ratio"] = round(c["size"] / placed, 4)
+
+    # 被埋没的好评论：编号要真、不许挑已经是高赞的那批
+    likes_sorted = sorted(back.values(), key=lambda c: c["likes"], reverse=True)
+    top_cut = likes_sorted[max(1, len(likes_sorted) // 4) - 1]["likes"]
+
+    gems, gem_seen = [], set()
+    for g in raw.get("buried_gems") or []:
+        if not isinstance(g, dict):
+            continue
+        i = g.get("id")
+        why = _txt(g.get("why"))
+        if not (isinstance(i, int) and i in back) or not why or i in gem_seen:
+            continue
+        src = back[i]
+        if src["likes"] > top_cut:
+            continue  # 已经排在前 25% 了，不叫「被埋没」
+        gem_seen.add(i)
+        gems.append({
+            "id": src["id"],
+            "text": src["text"],
+            "author": src["author"],
+            "likes": src["likes"],
+            "floor": src["floor"],
+            "why": why,
+        })
+
+    return {
+        "core_dispute": _txt(raw.get("core_dispute")),
+        "crux": _txt(raw.get("crux")),
+        "camps": camps,
+        "buried_gems": gems[:3],
+    }
+
+
+def camps_to_mindmap(data, title=""):
+    """
+    把阵营结构转成导图树，直接喂给前端现成的 SVG 渲染器（mmLayout/mmRender）。
+
+    这是复用已有资产的关键一步：不用新写渲染，争议地图就是一张真导图。
+      根        = 争论焦点
+      一级分支  = 各阵营（带人数）
+      二级分支  = 该阵营的论据
+    """
+    root_name = (data.get("core_dispute") or title or "评论区争议").strip()
+    # 截断要断在标点上。原来是硬切 24 字，真实的 core_dispute 普遍比这长，
+    # 结果根节点长这样：「AI 是真在替代程序员的活，还是只是给这轮裁员背…」
+    # —— 切在半个词上，导图正中间最显眼的位置，很难看。
+    LIMIT = 30
+    if len(root_name) > LIMIT:
+        cut = max(root_name.rfind(p, 0, LIMIT) for p in "，,。.；;？?！!、")
+        # 太靠前就宁可硬切（断在第 5 个字也不叫「在标点处断开」）
+        root_name = (root_name[:cut] if cut >= LIMIT // 2 else root_name[:LIMIT]) + "…"
+
+    children = []
+    for c in data.get("camps") or []:
+        kid = {"name": f'{c["name"]}（{c["size"]}）'}
+        grounds = [{"name": g} for g in c.get("grounds") or []]
+        if grounds:
+            kid["children"] = grounds
+        children.append(kid)
+
+    gems = data.get("buried_gems") or []
+    if gems:
+        children.append({
+            "name": f"被埋没的好评论（{len(gems)}）",
+            "children": [
+                {"name": (g["text"][:18] + "…") if len(g["text"]) > 18 else g["text"]}
+                for g in gems
+            ],
+        })
+
+    return {"name": root_name, "children": children}
+
+
+def aggregate_camps(comments, title="", use_cache=True):
+    """
+    comments: [{"id":..., "text":..., "likes":..., "author":...}] —— 顺序即楼层顺序
+    返回: {core_dispute, crux, camps[], buried_gems[], mindmap, _sampled, _total}
+
+    失败抛 ZhidaError / ValueError，调用方负责降级到 mock。
+    """
+    if not comments:
+        raise ValueError("comments 不能是空的")
+
+    sample, total = _sample_for_camps(comments)
+    if not sample:
+        raise ValueError("过滤掉空评论和重复评论后，没有剩下的了")
+
+    key = _cache_key({
+        "kind": "camps",
+        "title": (title or "").strip(),
+        "texts": [c["text"] for c in sample],
+    })
+    if use_cache:
+        hit = _cache_load().get(key)
+        if hit:
+            out = dict(hit)
+            out["_source"] = "cache"
+            # 这两个数字也要补 —— 缓存里不存下划线字段（见下面 _cache_put 那行），
+            # 只补 _source 的话前端首屏会渲染成「读了 undefined 条评论」。
+            # sample/total 在查缓存之前就算好了，直接用。
+            out["_analyzed"] = len(sample)
+            out["_total"] = total
+            return out
+
+    numbered, back = _renumber_camps(sample)
+    # 走 _chat_json：内部是流式收齐（非流式的大提示词会被服务端掐掉，
+    # 报 ConnectionResetError 10054）+ 坏 JSON 自动修 + 不可用时重试一次。
+    raw, msg = _chat_json(
+        [{"role": "user", "content": build_camps_prompt(numbered, total, title)}],
+        check=_check_camps,
+    )
+
+    result = _clean_camps(raw, back)
+    if not result["camps"]:
+        raise ValueError("没解析出任何阵营，去调 prompt.py 的 PROMPT_CAMPS")
+
+    result["mindmap"] = camps_to_mindmap(result, title)
+    result["related_posts"] = search_related_posts(result["core_dispute"])
+    # 别改名成 _sampled ——	FastAPI 的 jsonable_encoder 默认 sqlalchemy_safe=True，
+    # 会静默丢掉所有以 "_sa" 开头的键（它以为是 SQLAlchemy 的 _sa_instance_state）。
+    # 直接调函数看得到这个字段，过了 HTTP 就没了，排查起来非常费时间。
+    result["_analyzed"] = len(sample)
+    result["_total"] = total
+    result["_reasoning"] = (msg.get("reasoning_content") or "")[:2000]
+    result["_source"] = "live"
 
     _cache_put(key, {k: v for k, v in result.items() if not k.startswith("_")})
 
