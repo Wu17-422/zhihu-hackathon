@@ -1,0 +1,27 @@
+# 构建镜像时排除的东西。
+#
+# 为什么要有这个文件：Dockerfile 最后是 `COPY . .`，本地构建时 backend/ 里
+# 恰好放着 secret.txt 和 cache.json —— 不挡的话凭证会被打进镜像层，推到镜像仓库
+# 就等于泄露。提交前检查第 5 条明确要求凭证不得出现在代码仓库 / 前端响应 / 日志。
+#
+# （Render 没有这个问题，它是从 git 克隆的，这些文件本来就被 .gitignore 挡住了。
+#   这里挡的是「本机 docker build」这条路。）
+
+# 凭证
+secret.txt
+
+# 本地缓存（含真实知乎返回内容，没必要进镜像）
+cache.json
+
+# 演示视频，40MB
+media/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 本地启动脚本，镜像里用不到
+*.bat
+*.ps1

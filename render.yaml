@@ -1,0 +1,28 @@
+# Render Blueprint —— 让后端有一个不依赖任何人电脑的固定地址
+#
+# 为什么要有这个文件：
+#   2026-09-15 提交用的 cloudflared 快速隧道链接挂了。快速隧道每次启动随机分配
+#   子域名，旧的永远拿不回来；换成 ngrok 预留域名之后域名固定了，但服务器还是
+#   跑在笔记本上，关机就断。这个文件把后端搬到 Render，域名永久固定。
+#
+# 用法：Render 控制台 → New + → Blueprint → 选这个仓库 → Apply
+# 部署完地址形如 https://xili-pingshou.onrender.com
+
+services:
+  - type: web
+    name: xili-pingshou
+    runtime: docker
+    plan: free
+    # 新加坡离国内最近。免费版可选 oregon / ohio / virginia / frankfurt / singapore
+    region: singapore
+    # 仓库根目录是文档 + 扩展 + 后端混在一起的，构建上下文必须收到 backend/
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # ★ 直答的 Access Secret 走平台环境变量，绝不进仓库。
+      #   sync: false = 值不写在文件里，部署时在 Render 面板手填一次。
+      #   提交前检查第 5 条要求凭证不得出现在代码仓库 / 前端响应 / 日志 / 截图 / 视频。
+      - key: ZHIHU_ACCESS_SECRET
+        sync: false
