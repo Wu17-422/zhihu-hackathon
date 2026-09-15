@@ -1,0 +1,23 @@
+# ★ 凭证绝对不能进仓库 ★（提交前检查第 5 条：凭证不得出现在代码仓库/前端响应/日志/截图/视频）
+# 线上用平台的环境变量 ZHIHU_ACCESS_SECRET，本地用 backend/secret.txt
+backend/secret.txt
+backend/cache.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# 打包产物
+*.zip
+
+# 排查知乎官方 skill 时留的临时副本，不是本项目的东西
+_zhihu_skill_inspect/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
