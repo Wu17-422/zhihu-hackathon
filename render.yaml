@@ -13,8 +13,10 @@ services:
     name: xili-pingshou
     runtime: docker
     plan: free
-    # 新加坡离国内最近。免费版可选 oregon / ohio / virginia / frankfurt / singapore
-    region: singapore
+    # 美西。免费版可选 oregon / ohio / virginia / frankfurt / singapore。
+    # 地理上新加坡最近，但国内到新加坡的线路经常绕路拥塞，实际不如直连美西。
+    # ★ 这个值建好之后改不了，要换区域只能删掉服务重建。
+    region: oregon
     # 仓库根目录是文档 + 扩展 + 后端混在一起的，构建上下文必须收到 backend/
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
