@@ -21,3 +21,6 @@ _zhihu_skill_inspect/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 演示视频（40MB，不进仓库；线上用后端 /media/ 发）
+backend/media/

@@ -193,6 +193,23 @@ def demo():
     return FileResponse(Path(__file__).parent / "demo.html")
 
 
+MEDIA_DIR = Path(__file__).parent / "media"
+
+
+@app.get("/media/{name}", include_in_schema=False)
+def media(name: str):
+    """
+    演示视频这类静态素材。用路径参数而不是 StaticFiles，是为了挡住目录穿越
+    （`/media/../../secret.txt` 这种）。
+    视频播放器会发 Range 请求，Starlette 的 FileResponse 自己处理，不用手写。
+    """
+    f = MEDIA_DIR / name
+    if not f.is_file() or f.parent.resolve() != MEDIA_DIR.resolve():
+        raise HTTPException(status_code=404, detail="没有这个文件")
+    return FileResponse(f, media_type="video/mp4",
+                        headers={"Content-Disposition": f'inline; filename="{f.name}"'})
+
+
 @app.get("/api/health")
 def health():
     """P2/P3 用来确认后端活着。也顺手看 key 有没有读到。"""
