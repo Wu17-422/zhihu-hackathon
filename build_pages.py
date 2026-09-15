@@ -3,8 +3,9 @@
 # 用法：python build_pages.py <后端基址，如 https://xxx.ngrok-free.app>
 import io, sys, os
 base = sys.argv[1].rstrip("/")
-src = r"D:\zhihu-full\zhihu-hackathon\backend\demo.html"
-dst = r"D:\zhihu-full\zhihu-hackathon\docs\index.html"
+root = os.path.dirname(os.path.abspath(__file__))      # 仓库根目录
+src = os.path.join(root, "backend", "demo.html")
+dst = os.path.join(root, "docs", "index.html")
 s = io.open(src, encoding="utf-8").read()
 
 old = '  const API = "";'
