@@ -192,7 +192,8 @@ button{font-family:inherit}
   background:rgba(18,18,18,.88);color:#fff;font-size:13.5px;line-height:1.6;
   padding:11px 18px;border-radius:8px;z-index:2147483600;max-width:min(560px,90vw);
   opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;text-align:center}
-#zh-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+/* .show 要把 pointer-events 放开，否则提示里那几个「▶ 问题标题」的链接点不动 */
+#zh-toast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
 
 /* ═══════════════ AI 诊断卡（争论焦点 + 立场比例条 + 相关帖子） ═══════════════ */
 .zx-diagnosis{background:#fff;border-radius:4px;box-shadow:0 1px 3px rgba(18,18,18,.1);
@@ -932,8 +933,12 @@ button{font-family:inherit}
     document.getElementById("zh-side").innerHTML = sideHtml;
     const r = currentRoute();
     markTabs(r.name);
-    // 只有详情页才显示 AI 功能
-    document.getElementById("zx-fab").hidden = r.name !== "question";
+    // AI 入口每一页都留着。
+    // 以前是 hidden = r.name !== "question" —— 结果评委点开链接落在首页 #/，
+    // 满屏都是知乎的壳，找不到任何 AI 入口，得先猜中「点进某个问题」才看得到功能。
+    // 首页才是第一印象，入口不能藏。首页没有评论区的那两个功能会自己解释。
+    document.getElementById("zx-fab").hidden = false;
+    document.getElementById("zx-fab").classList.toggle("on-question", r.name === "question");
     window.scrollTo(0, 0);
   }
 
@@ -1157,7 +1162,14 @@ button{font-family:inherit}
   async function analyze() {
     if (analyzing) return;
     const comments = scrapeComments();
-    if (!comments.length) { toast("这个页面没有可分析的评论"); return; }
+    if (!comments.length) {
+      // 首页/热榜这些列表页没有评论区 —— 别只说「没有」，
+      // 直接把几个能点开的问题摆出来，让人一步到位。
+      const real = REAL_IDS.filter((k) => QUESTIONS[k]).slice(0, 3);
+      toast("这一页是列表页，没有评论区。<br>打开下面任一问题再点一次：<br>" +
+        real.map((k) => `<a href="#/q/${k}" style="color:#0084ff;display:inline-block;margin-top:4px">▶ ${esc(QUESTIONS[k].title)}</a>`).join("<br>"));
+      return;
+    }
 
     analyzing = true;
     const btn = document.getElementById("zx-act-analyze");
@@ -1331,7 +1343,12 @@ button{font-family:inherit}
     const content = richEl ? richEl.textContent.replace(/\s+/g, " ").trim().slice(0, 3000) : "";
     const titleEl = document.querySelector(".QuestionHeader-title");
     const title = titleEl ? titleEl.textContent.trim() : "";
-    if (!content) { toast("这个页面没识别到正文"); return; }
+    if (!content) {
+      const real = REAL_IDS.filter((k) => QUESTIONS[k]).slice(0, 3);
+      toast("这一页没有正文可拆。<br>打开下面任一回答再点一次：<br>" +
+        real.map((k) => `<a href="#/q/${k}" style="color:#0084ff;display:inline-block;margin-top:4px">▶ ${esc(QUESTIONS[k].title)}</a>`).join("<br>"));
+      return;
+    }
 
     const d = openDrawer(`<div class="zr-head">🧠 思维导图 <button class="zr-close">✕</button></div>
       <div class="zr-count">${esc(title)}</div>
