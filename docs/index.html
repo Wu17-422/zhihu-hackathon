@@ -1,0 +1,1562 @@
+<!DOCTYPE html>
+<!--
+  ⚔️ 犀利评手 · 线上 Demo（复刻知乎界面）
+
+  这一页同时干两件事，别搞混：
+
+  1) 【交作品的公网 Demo】评委不用装扩展，打开链接就能点。
+     页面自带全部样式和按钮，右下角 FAB 是五个功能的入口。
+  2) 【本地联调的靶子】DOM 结构照着真知乎搭（CommentItem / data-id /
+     RichContent / QuestionHeader-title），让扩展抓取走真知乎同一条路径。
+
+  ★ 接口走同源相对路径（API = ""）★
+     本地  http://localhost:8000/demo
+     线上  https://你的域名/demo
+     同一份代码，换域名不用改。
+
+  ★ 结构 ★
+     导航栏 → 路由：#/ 推荐  #/hot 热榜  #/discover 发现  #/vip 会员  #/q/<id> 详情
+     推荐流和热榜里绝大多数条目是「演示桩」，点开会提示；
+     只有 3 条（带 ▶ 标）有真实内容，能跑完整的 AI 分析流程。
+
+  部署见「使用说明.md · 十二、把 Demo 挂到公网」。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知乎 - 有问题，就会有答案</title>
+<style>
+/* ═══════════════ 基础 ═══════════════ */
+*{box-sizing:border-box}
+body{margin:0;background:#f6f6f6;color:#121212;
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit}
+::selection{background:#d6e8ff}
+
+/* ═══════════════ 演示横幅 ═══════════════ */
+.demo-banner{background:#fff8e1;color:#8a6d3b;font-size:12.5px;padding:6px 16px;
+  border-bottom:1px solid #f0e6c8;text-align:center;line-height:1.5}
+.demo-banner b{color:#a9741b}
+
+/* ═══════════════ 顶部导航 ═══════════════ */
+.zh-nav{position:sticky;top:0;z-index:900;background:#fff;box-shadow:0 1px 3px rgba(18,18,18,.1)}
+.zh-nav-in{max-width:1000px;margin:0 auto;height:52px;display:flex;align-items:center;gap:18px;padding:0 16px}
+.zh-logo{font-size:25px;font-weight:800;color:#0084ff;letter-spacing:-1.5px;cursor:pointer;
+  font-style:italic;flex:0 0 auto;user-select:none}
+.zh-tabs{display:flex;gap:20px;font-size:15px;flex:0 0 auto}
+.zh-tabs a{color:#121212;padding:2px 0;cursor:pointer;white-space:nowrap}
+.zh-tabs a:hover{color:#0084ff}
+.zh-tabs a.on{color:#0084ff;font-weight:600}
+.zh-search{flex:1 1 auto;max-width:400px;display:flex;align-items:center;gap:8px;
+  background:#f6f6f6;border-radius:999px;padding:0 14px;height:34px;min-width:0}
+.zh-search input{border:none;background:none;outline:none;flex:1;font-size:14px;
+  font-family:inherit;min-width:0;color:#121212}
+.zh-search .zh-mag{color:#8590a6;font-size:14px;flex:0 0 auto}
+.zh-ask{flex:0 0 auto;padding:0 16px;height:34px;border:none;border-radius:3px;
+  background:#0084ff;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+.zh-ask:hover{background:#0077e6}
+.zh-me{flex:0 0 auto;width:30px;height:30px;border-radius:50%;border:1px solid #ebebeb;
+  background:linear-gradient(135deg,#0084ff,#4da3ff);color:#fff;font-size:13px;font-weight:600;
+  display:flex;align-items:center;justify-content:center;cursor:pointer}
+
+/* ═══════════════ 两栏布局 ═══════════════ */
+.zh-main{max-width:1000px;margin:10px auto 70px;display:flex;gap:10px;
+  padding:0 16px;align-items:flex-start}
+.zh-content{flex:0 0 694px;max-width:694px;min-width:0}
+.zh-side{flex:1 1 auto;min-width:0;position:sticky;top:62px}
+@media(max-width:900px){
+  .zh-main{flex-direction:column;padding:0 10px;margin-top:8px}
+  .zh-content{flex:1 1 auto;max-width:none;width:100%}
+  .zh-side{position:static;width:100%}
+  .zh-tabs{display:none}
+  .zh-search{max-width:none}
+}
+
+/* ═══════════════ 通用卡片 ═══════════════ */
+.zh-card{background:#fff;border-radius:4px;box-shadow:0 1px 3px rgba(18,18,18,.1);
+  margin-bottom:10px;overflow:hidden}
+.zh-card-pad{padding:16px 20px}
+
+/* ═══════════════ 问题详情头 ═══════════════ */
+.zh-qhead{padding:20px 22px}
+.QuestionHeader-title{margin:0;font-size:22px;font-weight:600;line-height:1.4}
+.zh-qtags{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.zh-tag{background:#eef3f9;color:#4a7ab5;font-size:12px;padding:3px 9px;border-radius:3px;
+  cursor:pointer}
+.zh-tag:hover{background:#e2ecf8}
+.zh-qbtns{margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.zh-btn-blue{background:#0084ff;color:#fff;border:none;border-radius:3px;
+  padding:8px 18px;font-size:14px;font-weight:600;cursor:pointer}
+.zh-btn-blue:hover{background:#0077e6}
+.zh-btn-ghost{background:rgba(0,132,255,.1);color:#0084ff;border:1px solid #0084ff;
+  border-radius:3px;padding:8px 18px;font-size:14px;font-weight:600;cursor:pointer}
+.zh-btn-ghost:hover{background:rgba(0,132,255,.18)}
+.zh-btn-plain{background:#fff;color:#8590a6;border:1px solid #ebebeb;border-radius:3px;
+  padding:8px 18px;font-size:14px;cursor:pointer}
+.zh-bar{display:flex;gap:18px;margin-top:14px;padding-top:12px;border-top:1px solid #f0f0f0;
+  font-size:13px;color:#8590a6;flex-wrap:wrap}
+.zh-bar b{color:#121212;font-weight:600}
+
+/* ═══════════════ 回答 ═══════════════ */
+.zh-author{display:flex;align-items:center;gap:9px}
+.zh-a-avatar{width:38px;height:38px;border-radius:50%;flex:0 0 38px;
+  background:linear-gradient(135deg,#0084ff,#4da3ff);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-weight:600;font-size:15px}
+.zh-a-meta{min-width:0}
+.zh-a-name{font-size:15px;font-weight:600;color:#444}
+.zh-a-badge{font-size:12px;color:#8590a6;margin-top:1px}
+.RichContent{margin-top:14px;font-size:15px;line-height:1.85;color:#121212;white-space:pre-wrap}
+.zh-actions{display:flex;gap:6px;margin-top:16px;align-items:center;flex-wrap:wrap}
+.zh-vote{background:rgba(0,132,255,.1);color:#0084ff;font-weight:600;border:none;
+  border-radius:3px;padding:7px 14px;cursor:pointer;font-size:14px}
+.zh-vote.on{background:#0084ff;color:#fff}
+.zh-vote-down{background:rgba(0,132,255,.1);color:#0084ff;border:none;border-radius:3px;
+  padding:7px 10px;cursor:pointer;font-size:14px}
+.zh-act{background:none;border:none;color:#8590a6;font-size:14px;cursor:pointer;
+  padding:7px 11px;border-radius:3px}
+.zh-act:hover{background:#f6f6f6;color:#175199}
+.zh-cmt-count{font-size:13px;color:#8590a6;margin-top:14px;padding-top:12px;
+  border-top:1px solid #f0f0f0;font-weight:600}
+
+/* ═══════════════ 评论（对齐真知乎 DOM，扩展靠这些类名抓取） ═══════════════ */
+.CommentList{margin-top:2px}
+.CommentItem{padding:12px 0;border-bottom:1px solid #f6f6f6}
+.CommentItem:last-child{border-bottom:none}
+.CommentItem-inner{display:flex;gap:10px}
+.CommentItem-avatar{width:32px;height:32px;border-radius:50%;flex:0 0 32px;
+  background:#e0e6ef;color:#8590a6;font-size:13px;
+  display:flex;align-items:center;justify-content:center}
+.CommentItem-main{flex:1;min-width:0}
+.CommentItem-author{font-size:14px;font-weight:600;color:#444}
+.CommentItem-text{margin-top:4px;color:#1a1a1a;word-break:break-word;line-height:1.7}
+.CommentItem-footer{margin-top:6px;font-size:13px;color:#8590a6;display:flex;
+  gap:16px;align-items:center}
+.CommentItem-like{background:none;border:none;padding:0;cursor:pointer;color:#8590a6;
+  font-size:13px}
+.CommentItem-like:hover{color:#0084ff}
+
+/* ═══════════════ 侧栏 ═══════════════ */
+.zh-side-card{background:#fff;border-radius:4px;box-shadow:0 1px 3px rgba(18,18,18,.1);
+  padding:14px 16px;margin-bottom:10px}
+.zh-side-title{font-size:15px;font-weight:600;margin-bottom:8px;display:flex;
+  align-items:center;gap:6px}
+.zh-side-item{padding:9px 0;border-bottom:1px solid #f6f6f6;cursor:pointer;
+  font-size:14px;line-height:1.55}
+.zh-side-item:last-child{border-bottom:none}
+.zh-side-item:hover{color:#0084ff}
+.zh-side-sub{font-size:12.5px;color:#8590a6;margin-top:3px}
+.zh-rank{display:inline-block;width:20px;font-weight:700;color:#ff9607;flex:0 0 20px}
+.zh-rank.top{color:#ff3b30}
+.zh-hot-row{display:flex;gap:8px;padding:10px 0;border-bottom:1px solid #f6f6f6;
+  cursor:pointer;align-items:flex-start}
+.zh-hot-row:last-child{border-bottom:none}
+.zh-hot-row:hover .zh-hot-title{color:#0084ff}
+.zh-hot-title{font-size:15px;line-height:1.5;color:#121212}
+.zh-hot-meta{font-size:12.5px;color:#8590a6;margin-top:4px}
+.zh-hot-heat{color:#ff9607;font-weight:600}
+
+/* ═══════════════ 推荐流卡片 ═══════════════ */
+.feed-title{font-size:18px;font-weight:600;line-height:1.45;margin:0 0 8px;cursor:pointer;
+  display:block}
+.feed-title:hover{color:#175199}
+.feed-excerpt{font-size:15px;line-height:1.7;color:#444;margin:0 0 10px;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.feed-author{font-size:13px;color:#8590a6;margin-bottom:10px}
+.feed-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+  border-top:1px solid #f0f0f0;padding-top:10px}
+.feed-actions .zh-act,.feed-actions .zh-vote{font-size:13.5px}
+.zh-badge-live{display:inline-block;font-size:11px;font-weight:700;color:#fff;
+  background:linear-gradient(135deg,#0066ff,#4da3ff);border-radius:3px;
+  padding:1px 6px;margin-right:6px;vertical-align:2px}
+
+/* ═══════════════ 发现 / 会员 ═══════════════ */
+.disc-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:900px){.disc-grid{grid-template-columns:1fr}}
+.disc-item{background:#fff;border-radius:4px;box-shadow:0 1px 3px rgba(18,18,18,.1);
+  padding:16px 18px}
+.disc-item h3{margin:0 0 8px;font-size:16px;font-weight:600}
+.disc-item p{margin:0;font-size:13.5px;color:#8590a6;line-height:1.6}
+.vip-banner{background:linear-gradient(120deg,#2b2b33,#4a4a58);color:#f5d9a0;
+  border-radius:4px;padding:24px 26px;margin-bottom:10px;
+  box-shadow:0 1px 3px rgba(18,18,18,.1)}
+.vip-banner h2{margin:0 0 8px;font-size:20px;font-weight:700;letter-spacing:1px}
+.vip-banner p{margin:0;font-size:13.5px;color:#c9c9d4;line-height:1.7}
+
+/* ═══════════════ 空态 / 提示 ═══════════════ */
+.zh-empty{background:#fff;border-radius:4px;box-shadow:0 1px 3px rgba(18,18,18,.1);
+  padding:40px 24px;text-align:center;color:#8590a6;font-size:14px;line-height:1.8}
+.zh-empty b{display:block;font-size:16px;color:#121212;margin-bottom:8px}
+#zh-toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(10px);
+  background:rgba(18,18,18,.88);color:#fff;font-size:13.5px;line-height:1.6;
+  padding:11px 18px;border-radius:8px;z-index:2147483600;max-width:min(560px,90vw);
+  opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;text-align:center}
+#zh-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ═══════════════ AI 诊断卡（争论焦点 + 立场比例条 + 相关帖子） ═══════════════ */
+.zx-diagnosis{background:#fff;border-radius:4px;box-shadow:0 1px 3px rgba(18,18,18,.1);
+  padding:16px 20px;margin-bottom:10px;font-size:13.5px;color:#1a1a1a;line-height:1.7}
+.zx-diag-head{display:flex;align-items:center;gap:8px;font-weight:700;color:#0066ff;
+  margin-bottom:10px;flex-wrap:wrap}
+.zx-ai-chip{font-size:10px;font-weight:700;color:#fff;
+  background:linear-gradient(135deg,#0066ff,#4da3ff);border-radius:4px;padding:2px 6px}
+.zx-src{font-size:11px;font-weight:700;padding:1px 9px;border-radius:999px;
+  background:#f0f0f0;color:#8590a6}
+.zx-src.live{background:#e7f8f0;color:#0fa968}
+.zx-src.mock{background:#fef4e6;color:#f59e0b}
+.zx-src.cache{background:#ecf3ff;color:#0066ff}
+.zx-core{background:#ecf3ff;border-radius:8px;padding:11px 13px;font-size:13.5px;
+  line-height:1.7;color:#121212}
+.zx-stance-bar{margin:12px 0 4px}
+.zx-stance-bar-in{display:flex;height:16px;border-radius:8px;overflow:hidden;background:#eee}
+.zx-stance-seg{height:100%;transition:width .5s ease}
+.zx-stance-seg.agree{background:#0fa968}
+.zx-stance-seg.neutral{background:#f59e0b}
+.zx-stance-seg.oppose{background:#ef4444}
+.zx-stance-labels{display:flex;justify-content:space-between;font-size:12px;
+  color:#666;margin-top:6px}
+.zx-progress{font-size:12.5px;color:#8590a6;margin-top:10px}
+.zx-related{margin-top:12px;border-top:1px dashed #d8e6ff;padding-top:10px}
+.zx-related-title{font-size:12.5px;font-weight:700;color:#0066ff;margin-bottom:6px}
+.zx-related-item{font-size:13px;line-height:1.6;margin:5px 0}
+.zx-related-item a{color:#0066ff}
+.zx-related-item span{color:#8590a6}
+.zx-err{color:#b91c1c;font-size:13px;margin-top:8px;line-height:1.7}
+
+/* ═══════════════ 评论下的分析卡 ═══════════════ */
+.zx-host{margin-top:8px}
+.zx-card{background:#f4f8ff;border:1px solid #e0ecff;border-left:3px solid #0066ff;
+  border-radius:8px;padding:11px 13px;font-size:13px;color:#1a1a1a;line-height:1.6;
+  animation:zx-in .28s ease}
+@keyframes zx-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.zx-card-head{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.zx-brand{font-size:12px;font-weight:700;color:#0066ff}
+.zx-stance{margin-left:auto;font-size:11px;font-weight:700;padding:2px 9px;
+  border-radius:999px;white-space:nowrap}
+.zx-stance.agree{background:#e7f8f0;color:#0fa968}
+.zx-stance.oppose{background:#fdeceb;color:#ef4444}
+.zx-stance.neutral{background:#fef4e6;color:#f59e0b}
+.zx-block{background:#f5f9ff;border:1px solid #e0ecff;border-radius:7px;
+  padding:7px 10px;margin-bottom:6px}
+.zx-block-row{font-size:12.5px;color:#444;line-height:1.6}
+.zx-block-row b{color:#1e6fff;font-size:11px;margin-right:6px}
+.zx-flaws{border:1px solid #ffd9d9;background:#fff6f6;border-radius:7px;
+  padding:8px 10px;margin-top:2px}
+.zx-flaws-title{font-size:11px;font-weight:700;color:#ef4444;letter-spacing:1px;
+  margin-bottom:5px}
+.zx-flaw{display:flex;gap:8px;align-items:flex-start;margin:4px 0;font-size:12px}
+.zx-flaw-badge{flex:0 0 auto;font-weight:700;color:#ef4444;background:#ffe3e3;
+  border:1px solid #ffc9c9;border-radius:6px;padding:0 7px;font-size:11px;
+  line-height:1.8;white-space:nowrap}
+.zx-flaw-desc{color:#b91c1c;line-height:1.6}
+
+/* ═══════════════ 悬浮 FAB（五个功能收成一个，展开式） ═══════════════ */
+#zx-fab{position:fixed;right:22px;bottom:22px;z-index:2147483000}
+#zx-fab-main{width:58px;height:58px;border-radius:50%;border:none;
+  background:linear-gradient(135deg,#0066ff,#4da3ff);color:#fff;font-size:23px;
+  cursor:pointer;box-shadow:0 6px 22px rgba(0,102,255,.45);line-height:1;
+  transition:transform .2s}
+#zx-fab-main:hover{transform:scale(1.06)}
+#zx-fab.open #zx-fab-main{transform:rotate(45deg)}
+#zx-fab-menu{position:absolute;right:2px;bottom:70px;display:none;
+  flex-direction:column;gap:9px;align-items:flex-end}
+#zx-fab.open #zx-fab-menu{display:flex}
+.zx-fab-item{border:none;border-radius:20px;padding:10px 17px;font-size:13.5px;
+  font-weight:600;color:#fff;cursor:pointer;white-space:nowrap;
+  box-shadow:0 4px 14px rgba(0,0,0,.22)}
+.zx-fab-item:disabled{opacity:.6;cursor:default}
+.zx-fab-item.b1{background:#0066ff}
+.zx-fab-item.b2{background:#00897b}
+.zx-fab-item.b3{background:#7c4dff}
+.zx-fab-item.b4{background:#e65100}
+
+/* ═══════════════ 右侧抽屉（思维导图 / 写评论 / 故事） ═══════════════ */
+.zx-drawer{position:fixed;top:0;right:0;width:440px;max-width:100vw;height:100vh;background:#fff;
+  z-index:2147483001;box-shadow:-4px 0 24px rgba(0,0,0,.16);overflow-y:auto;
+  padding:18px;box-sizing:border-box;font-size:13.5px;color:#1a1a1a;line-height:1.65}
+@media(max-width:520px){.zx-drawer{width:100vw}}
+.zx-drawer-mask{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483000}
+.zr-head{display:flex;align-items:center;gap:8px;font-size:15.5px;font-weight:700;
+  color:#0066ff;margin-bottom:12px}
+.zr-close{margin-left:auto;background:none;border:none;font-size:21px;cursor:pointer;
+  color:#999;line-height:1}
+.zr-count{color:#8590a6;font-size:12.5px;margin-bottom:10px}
+.zr-draft{width:100%;min-height:110px;border:1px solid #ebebeb;border-radius:8px;
+  padding:11px;font-size:13.5px;box-sizing:border-box;font-family:inherit;
+  line-height:1.7;outline:none;resize:vertical}
+.zr-draft:focus{border-color:#0084ff}
+.zr-bar{display:flex;align-items:center;gap:10px;margin:9px 0;font-size:12.5px;
+  color:#8590a6}
+.zr-verdict{background:#ecf3ff;border-radius:7px;padding:10px 12px;margin-bottom:8px}
+.zr-p-flaw{border:1px solid #ffd9d9;background:#fff6f6;border-radius:7px;
+  padding:9px 11px;margin-bottom:7px;font-size:13px}
+.zr-pf-name{font-weight:700;color:#ef4444}
+.zr-pf-claim{color:#b91c1c;margin:3px 0}
+.zr-pf-why{color:#444}
+/* 2026-09-15：「改好的版本」(.zr-p-rewrite) 按需求去掉了 —— 用户要的是判断和
+   参考资料，不是代笔。这两条留着的只有历史包袱，别再写回去。 */
+.zr-viewpoint{background:#f7f7fa;border-radius:7px;padding:9px 11px;margin-bottom:7px;
+  font-size:13px;color:#444;line-height:1.65}
+.zr-viewpoint b{color:#1e6fff;font-size:11.5px;margin-right:6px}
+.zr-p-loading{color:#8590a6;font-size:13px}
+.zr-p-ok{font-size:12.5px;color:#0fa968;background:#f0fbf6;border-radius:7px;padding:8px 11px}
+.zr-related-item{font-size:12.5px;line-height:1.6;padding:7px 0;border-bottom:1px solid #f0f0f0}
+.zr-related-item:last-child{border-bottom:none}
+.zr-related-reason{font-size:11.5px;color:#8590a6;margin-top:2px}
+.zr-item{padding:11px 0;border-bottom:1px solid #f0f0f0;cursor:pointer}
+.zr-item:last-child{border-bottom:none}
+.zr-item:hover .zr-item-t{color:#0066ff}
+.zr-item-t{font-size:14px;font-weight:600;line-height:1.5}
+.zr-item-d{font-size:12.5px;color:#8590a6;margin-top:4px;line-height:1.6}
+
+/* ═══════════════ 思维导图（真·树，带连接线） ═══════════════ */
+.zx-tree{margin-top:10px;font-size:13.5px}
+.zx-tree ul{list-style:none;margin:0;padding-left:18px;position:relative}
+.zx-tree > ul{padding-left:0}
+.zx-tree li{position:relative;padding:4px 0 4px 18px}
+.zx-tree > ul > li{padding-left:0}
+.zx-tree li::before{content:"";position:absolute;left:0;top:0;bottom:0;
+  border-left:1px solid #cfe0ff}
+.zx-tree li:last-child::before{bottom:auto;height:18px}
+.zx-tree li::after{content:"";position:absolute;left:0;top:18px;width:14px;
+  border-top:1px solid #cfe0ff}
+.zx-tree > ul > li::before,.zx-tree > ul > li::after{display:none}
+.zx-node{display:inline-block;background:#f4f8ff;border:1px solid #e0ecff;
+  border-radius:6px;padding:3px 10px;line-height:1.6;color:#1a1a1a}
+.zx-node.root{background:linear-gradient(135deg,#0066ff,#4da3ff);color:#fff;
+  border:none;font-weight:700;padding:6px 14px;border-radius:8px;font-size:14.5px}
+.zx-node.l1{background:#ecf3ff;border-color:#cfe0ff;font-weight:600;color:#12508f}
+
+/* ── 争议地图（首屏）：阵营比例条 + 阵营卡 + 被埋没的好评论 ── */
+.zc-sec{font-size:13px;font-weight:700;color:#1a1a1a;margin:14px 0 8px;display:flex;align-items:center;gap:6px}
+.zc-note{font-size:12px;color:#8590a6;line-height:1.6}
+.zc-bar{display:flex;height:16px;border-radius:8px;overflow:hidden;background:#eee;margin:8px 0 6px}
+.zc-seg{height:100%;transition:width .4s ease}
+.zc-legends{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:#444;margin-bottom:12px}
+.zc-legend{display:inline-flex;align-items:center;gap:5px}
+.zc-legend i{width:9px;height:9px;border-radius:3px;display:inline-block}
+.zc-camp{border:1px solid #eee;border-radius:8px;padding:10px 12px;margin-bottom:8px;
+  border-left:3px solid #ccc;background:#fff}
+.zc-camp-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.zc-camp-name{font-size:13px;font-weight:700;color:#1a1a1a}
+.zc-camp-size{font-size:11px;color:#8590a6;margin-left:auto;white-space:nowrap}
+.zc-camp-claim{font-size:12.5px;color:#444;line-height:1.6;margin-bottom:6px}
+.zc-grounds{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}
+.zc-ground{font-size:11px;background:#f4f8ff;border:1px solid #e0ecff;color:#12508f;
+  border-radius:999px;padding:2px 9px}
+.zc-quote{font-size:12.5px;color:#555;background:#fafafa;border-radius:7px;
+  padding:8px 10px;line-height:1.6;margin-top:6px}
+.zc-quote-who{font-size:11px;color:#8590a6;margin-top:4px}
+.zc-gem{border:1px solid #e6f4ec;background:#f7fdfa;border-radius:8px;padding:9px 11px;margin-bottom:8px}
+.zc-gem-meta{display:flex;gap:12px;font-size:11px;color:#8590a6;margin-bottom:4px}
+.zc-gem-text{font-size:12.5px;color:#1a1a1a;line-height:1.6}
+.zc-gem-why{font-size:11.5px;color:#2a9d8f;margin-top:5px;line-height:1.5}
+.zc-folder{margin:14px 0 0;border-top:1px solid #f0f0f0;padding-top:10px}
+</style>
+</head>
+<body>
+
+<div class="demo-banner">
+  <b>交互演示</b> · 这是复刻的知乎界面（不是真实知乎）。推荐 / 热榜里带 <b>▶ 可点开</b> 的 6 个问题有真实内容，
+  点进去后用右下角蓝色按钮跑 AI 分析。
+</div>
+
+<nav class="zh-nav">
+  <div class="zh-nav-in">
+    <div class="zh-logo" id="zh-logo">知乎</div>
+    <div class="zh-tabs" id="zh-tabs">
+      <a data-route="#/">首页</a>
+      <a data-route="#/hot">热榜</a>
+      <a data-route="#/discover">发现</a>
+      <a data-route="#/vip">会员</a>
+    </div>
+    <div class="zh-search">
+      <span class="zh-mag">🔍</span>
+      <input id="zh-q" placeholder="搜索知乎内容" autocomplete="off">
+    </div>
+    <button class="zh-ask" id="zh-ask">提问</button>
+    <div class="zh-me" title="演示账号">我</div>
+  </div>
+</nav>
+
+<div class="zh-main">
+  <div class="zh-content" id="zh-content"></div>
+  <aside class="zh-side" id="zh-side"></aside>
+</div>
+
+<div id="zx-fab" hidden>
+  <div id="zx-fab-menu">
+    <button class="zx-fab-item b1" id="zx-act-analyze">⚔️ 分析这个帖子的评论</button>
+    <button class="zx-fab-item b3" id="zx-act-polish">✍️ 写评论 · 实时润色</button>
+    <button class="zx-fab-item b2" id="zx-act-mindmap">🧠 正文转思维导图</button>
+    <button class="zx-fab-item b4" id="zx-act-story">📚 知乎故事 / 知识</button>
+  </div>
+  <button id="zx-fab-main" title="犀利评手">✚</button>
+</div>
+
+<div id="zh-toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   犀利评手 · Demo 前端（纯静态，不依赖浏览器扩展）
+   ═══════════════════════════════════════════════════════════════ */
+(function () {
+  // 同源相对路径 —— 本地 http://localhost:8000/demo 和公网部署后都不用改
+  // 这一份托管在 GitHub Pages 上，页面和 API 不同源，必须写绝对地址。
+  // 生成来源：backend/demo.html（那边是同源相对路径）。改完 demo.html 要重新生成，
+  // 见 docs/README.md。
+  const API = "https://exorcism-irritably-stump.ngrok-free.dev";
+  // GitHub Pages 版专用：页面在 github.io、API 在 ngrok，不同源。
+  // ngrok 免费版会对浏览器发的 GET 插一页确认页（POST 不受影响），
+  // 官方给的开关就是这个头。Api 之外的一律不碰。
+  const _fetch = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    const url = typeof input === "string" ? input : ((input && input.url) || "");
+    if (url.indexOf(API) === 0) {
+      init = Object.assign({}, init);
+      const h = Object.assign({}, init.headers || {});
+      h["ngrok-skip-browser-warning"] = "1";
+      init.headers = h;
+    }
+    return _fetch(input, init);
+  };
+
+
+  // 调样式又不想烧直答额度时，在控制台执行：localStorage.zhaMock = 1
+  // 恢复真实调用：localStorage.removeItem("zhaMock")
+  // ⚠ 绝对不要把它写成常量 true —— 那样线上演示永远显示假数据。
+  const FORCE = (() => {
+    try { return localStorage.getItem("zhaMock") ? "?force=mock" : ""; } catch (e) { return ""; }
+  })();
+
+  function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+
+  let toastTimer = null;
+  function toast(msg, ms) {
+    const t = document.getElementById("zh-toast");
+    t.innerHTML = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), ms || 3200);
+  }
+
+  /* ═══════════ 数据 ═══════════ */
+
+  // 三个「真的有内容」的问题。评论写作 [作者, 正文, 赞数]
+  const QUESTIONS = {
+    q1: {
+      title: "AI 会取代程序员吗？",
+      topics: ["计算机", "人工智能", "职业发展"],
+      followers: "1.2 万",
+      views: "18.7 万",
+      answers: [
+        {
+          id: "a1", author: "张三", avatar: "张", badge: "计算机科学话题优秀回答者",
+          likes: 3421,
+          content: "这两年 AI 写代码的能力涨得很快，但要说「取代」，我觉得还早。\n\n真正值得讨论的不是它能不能写代码，而是它改变了这个行业里「什么算是有价值的技能」。以前你把一个功能实现出来就有价值；现在实现这件事被压缩了，价值往上游走——判断该做什么、判断它写得对不对、以及为结果负责。\n\n所以我的结论是：被取代的不是程序员，是「只负责把需求翻译成代码」这个岗位形态。",
+          comments: [
+            ["李工程师", "AI 就是个提效工具，程序员的价值会从写代码转向做架构和判断。会用它的人不会被淘汰，拒绝用的人才会。", 213],
+            ["老王", "扯淡。我们团队用了半年，AI 只能写写样板代码，稍微复杂一点的业务逻辑就开始胡说八道，每次都要人工兜底，反而更慢。", 187],
+            ["陈某某", "我觉得关键不是会不会取代，而是初级岗位会先消失。以前招 5 个初级，现在招 1 个能指挥 AI 的。", 156],
+            ["数据派", "某机构 2025 年的报告说，用了 AI 的团队平均产出提升 26%，但同时代码返工率上升了 11%。这组数字比吵架有用。", 142],
+            ["路人甲", "程序员就是矫情，当年计算器出来的时候算盘师傅也这么喊，现在谁还记得算盘？", 98],
+            ["怀疑论者", "说 AI 取代程序员的，基本都是卖课的。真正在一线的人根本没时间发帖，都在改 bug。", 88],
+            ["十二年后端", "我做了 12 年后端，说句掏心窝的话：AI 最可怕的不是写代码，是它让管理层觉得「不需要那么多人了」。我们组今年 HC 直接砍半。", 76],
+            ["冷静一下", "楼上的担心是有道理的，但 HC 砍半跟 AI 关系不大吧，大环境本来就是降本增效，AI 只是个好用的借口。", 64],
+            ["应届生小张", "作为一个刚毕业的人，我确实焦虑。投了 200 份简历没回音，看到这个帖子更慌了。", 52],
+            ["教育观察", "这个话题其实应该放到教育层面聊——如果 AI 能做初级工作，那大学还该不该教那些基础语法？", 41],
+            ["一线搬砖", "补充一个数据点：我们公司上 Copilot 之后，写代码是快了，但 code review 的时间反而涨了，因为要花更多精力看它有没有埋坑。", 37],
+            ["并发老哥", "AI 写不了并发，这是硬伤。真出线上问题的时候，它给的那些方案一个都不能用，还得人来扛。", 29],
+            ["附议", "楼上说得对，工具就是工具。", 12],
+            ["谁的代码不是抄的", "笑死，谁的代码不是抄的？AI 抄得比人快而已，凭什么说它不行。", 8],
+            ["老油条", "说白了，还是看老板想不想裁人。AI 只是给了个由头，想裁的总能找到理由。", 5],
+          ],
+        },
+        {
+          id: "a2", author: "李四", avatar: "李", badge: "互联网行业从业者",
+          likes: 876,
+          content: "补充一个被忽略的角度：AI 对程序员的冲击是不均匀的。\n\n写 CRUD、写胶水代码、写单元测试这一类「规格明确」的活，确实在被快速吃掉。但排查线上问题、做技术选型、跟产品吵架这三件事，AI 目前一点脾气都没有。\n\n所以与其焦虑「会不会被取代」，不如看看自己每天的时间花在这两类事上各占多少。",
+          comments: [
+            ["架构师老赵", "同意「不均匀」这个说法。我们组现在招人的标准已经变了，不太看你会不会写某个框架，看你能不能把一个模糊需求拆清楚。", 89],
+            ["小透明", "排查线上问题 AI 真的不行吗？我最近用 AI 分析日志挺顺的。", 42],
+            ["运维老兵", "日志分析是模式匹配，那是 AI 强项。但「这个报警该不该半夜叫醒人」这种判断它做不了，因为它不承担后果。", 61],
+            ["产品经理甲", "看到「跟产品吵架」被点名了，笑不出来。", 133],
+            ["刚转行的", "那像我这种半路出家、基础不牢的，是不是等于被判死刑了。", 27],
+            ["夜校学生", "楼上的别慌，我 32 岁转的行，现在第二年。工具变了而已，逻辑思维和脸皮厚度才是硬通货。", 55],
+          ],
+        },
+      ],
+    },
+
+    q2: {
+      title: "为什么越来越多年轻人开始「反向消费」？",
+      topics: ["消费", "社会现象", "年轻人"],
+      followers: "8734",
+      views: "9.2 万",
+      answers: [
+        {
+          id: "b1", author: "消费观察者", avatar: "消", badge: "消费领域答主",
+          likes: 1204,
+          content: "「反向消费」这个词其实有点误导。年轻人不是不花钱，是拒绝为「不值得的溢价」花钱。\n\n同一件东西，贴上大牌标签卖 800，白牌卖 80，功能没差的时候，越来越多人选 80。这不是消费降级，是信息差被抹平之后，品牌溢价的合理性被重新审视了。\n\n真正值得担心的是另一头：当所有人都在比价，愿意为设计、为品质多付钱的人变少，创新就没人为它买单了。",
+          comments: [
+            ["月光族代表", "说白了就是没钱。别把被迫省钱包装成理性选择，我要是年入百万我也想买什么买什么。", 342],
+            ["理性派", "不完全同意。我年收入还行，但确实不买名牌包了，因为发现背出去也没人在意。溢价买的是自我感觉，这几年这东西贬值了。", 198],
+            ["品牌策划", "作为从业者说一句：溢价的支撑是「别人认」，一旦社交场景变少，溢价立刻崩。所以不是年轻人变了，是场景没了。", 156],
+            ["小城青年", "我们这儿的反向消费是反向的：越是小地方越看重牌子，反而是大城市的人穿得随便。", 121],
+            ["实习生小林", "刚工作那年买了个大牌包，吃了一个月泡面。现在想想挺后悔的，但当时觉得那是融入同事的入场券。", 88],
+            ["经济学家迷", "这其实就是典型的「凡勃伦商品」失效。经济下行期，炫耀性消费的收益下降得比成本快。", 63],
+            ["怀疑一切", "楼上动不动就搬概念。有没有可能就是单纯大家兜里钱少了？", 41],
+          ],
+        },
+      ],
+    },
+
+    q3: {
+      title: "30 岁转行还来得及吗？",
+      topics: ["职业发展", "转行", "职场"],
+      followers: "2.1 万",
+      views: "35.6 万",
+      answers: [
+        {
+          id: "c1", author: "过来人老周", avatar: "周", badge: "职业规划话题答主",
+          likes: 2890,
+          content: "我 31 岁从传统制造业转的互联网，现在第 5 年。\n\n先给结论：来得及，但你要接受一个不公平的前提——你不会再有「慢慢试」的资格了。22 岁转错行，浪费两年还能重来；32 岁转错行，代价是你的全部积蓄和家庭安全感。\n\n所以我的建议不是「勇敢一点」，而是「先在业余时间做出一点东西，用它换到第一个机会，再辞职」。顺序反了，大概率变成事故。",
+          comments: [
+            ["焦虑的三十岁", "道理都懂，但业余时间做东西真的好难，每天下班就十点了。", 176],
+            ["两个娃的爸", "已婚已育的更要慎重。我当年裸辞转行，家里经济断了一年，现在回头看不后悔但绝不敢再选一次。", 214],
+            ["HR 视角", "从招聘方说个实话：30 岁转行的简历，我们看的是「你为新方向已经做了什么」，不是「你有多想转」。有作品、有项目，门槛就低很多。", 302],
+            ["刚被裁的", "所以现在这行情，转行是不是得更谨慎了。", 95],
+            ["乐观派", "我 35 转的，现在挺好。别把年龄当借口，很多人是拿年龄掩饰自己一直没行动。", 88],
+            ["反向鸡汤", "楼上的幸存者偏差有点重。你成功了不代表这条路对多数人成立，尤其是背着房贷的人。", 143],
+          ],
+        },
+      ],
+    },
+
+    q4: {
+      title: "如何看待某大厂宣布「全员 AI 编程」，要求每个团队今年产出提升 50%？",
+      topics: ["互联网", "人工智能", "企业管理"],
+      followers: "1.6 万",
+      views: "24.3 万",
+      answers: [
+        {
+          id: "d1", author: "一线管理者", avatar: "管", badge: "互联网话题答主",
+          likes: 1673,
+          content: "邮件我也收到了，说点内部的真实情况。\n\n「产出提升 50%」这个数字是怎么来的，没人说得清。它既不是工时口径，也不是需求交付数口径。一个无法被定义的目标，本质上不是目标，是压力。\n\n真正会发生的事是：团队会把原本就在做的事，换一套说法汇报上去。这是所有不可量化 KPI 的归宿。\n\n我不是反对用 AI，我是反对把管理问题写成技术问题。",
+          comments: [
+            ["打工人丙", "「一个无法被定义的目标，本质上不是目标，是压力」这句我要抄下来。", 421],
+            ["中层挣扎", "作为被夹在中间的人说一句：上面要数字，下面要喘气，最后只能我自己编。这个制度最消耗的就是中层。", 318],
+            ["技术乐观派", "也不用这么悲观吧。产出的口径定下来，认真用 AI 的团队确实能提不少，我们组试点三个月效果挺明显的。", 187],
+            ["质疑者", "那你们组提升归因做过吗？到底是 AI 带来的，还是本来业务就有波峰？", 233],
+            ["HR 小声说", "补充一个信息：这封邮件发出来的同一周，我们部门暂停了校招。所以这个「50%」是留着做裁员依据的。", 502],
+            ["理性讨论", "楼上这个推论太快了。停招和提效要求可能只是同一个降本周期里的两件独立的事。", 96],
+            ["前员工", "我去年从这家走的。这种口号式目标每两年一轮，每次的结果都是老人走一批、新人扛更多。", 158],
+          ],
+        },
+      ],
+    },
+
+    q5: {
+      title: "面试时被问「你最大的缺点是什么」，怎么回答才不显得假？",
+      topics: ["求职", "面试", "职场"],
+      followers: "3.4 万",
+      views: "52.1 万",
+      answers: [
+        {
+          id: "e1", author: "面试官老陈", avatar: "陈", badge: "人力资源话题答主",
+          likes: 4211,
+          content: "面了十年人，我说个反常识的：这道题我真正想听的，不是你缺点是什么，是你有没有「自我校准」的能力。\n\n「我太追求完美」这种答案之所以扣分，不是因为它假，是因为它证明你连自己的问题都没认真看过一遍。\n\n有效的答法是三段式：一个真实但不致命的缺点 + 它造成过的具体后果 + 你为此建立的对策。只要第三段是具体的机制而不是「我以后会注意」，这道题你就赢了。",
+          comments: [
+            ["求职小白", "那如果我真实的缺点就是致命的那种呢？比如拖延很严重。", 288],
+            ["面试官老陈", "回复楼上的：那就说它具体影响过的那一小块，然后说你用什么外部约束兜住。面试不是忏悔，是证明你有办法跟自己的毛病共存。", 512],
+            ["HR 视角", "补充：候选人说「我沟通不够主动」，我们反而会觉得可信。最怕的是答完这道题，你还是一个没有任何缺陷的人。", 341],
+            ["被刷过三次", "我上次答「我有时候过于关注细节」，面试官直接问「举个例子」，我当时就卡住了。没有例子支撑的缺点全是套话。", 276],
+            ["杠一下", "说得这么好听，那为什么还有那么多公司拿这道题筛人？本质上就是想要个「听话但别太平庸」的答案。", 189],
+            ["刚拿到 offer", "我最后用的答法是：我不擅长在会议上临时被问数据，所以我养成了随身记指标的习惯。面试官点头了，然后拿到了。", 402],
+            ["职场老油条", "这道题的标准答案只有一句：说一个你能改的，别说一个改不了的。", 167],
+          ],
+        },
+      ],
+    },
+
+    q6: {
+      title: "小城市体制内和一线城市大厂，到底该怎么选？",
+      topics: ["职业选择", "公务员", "互联网"],
+      followers: "2.8 万",
+      views: "41.9 万",
+      answers: [
+        {
+          id: "f1", author: "两边都待过", avatar: "两", badge: "职业规划话题答主",
+          likes: 3120,
+          content: "我在大厂待了 6 年，去年考回家乡的体制内。两边都完整经历过，说点不讨好的话。\n\n大家比较的时候总在比收入和稳定，但真正决定你过得舒不舒服的是第三件事：你在哪个环境里「说话有人听」。\n\n大厂给你的是能力和项目，但你的意见永远排在岗位上；体制内给你的东西更少，但一个 35 岁的人在那里说一句话，分量是实打实的。\n\n所以这不是钱的选择，是「你想在哪套评价体系里变老」的选择。",
+          comments: [
+            ["小城公务员", "「你想在哪套评价体系里变老」说得太准了。我回来三年，最大的变化是终于不焦虑年龄了。", 456],
+            ["大厂 P7", "反过来讲，我认识回去的人里，后悔的比留下的多。落差不是钱，是周围人讨论的东西你完全不关心了。", 389],
+            ["刚毕业的", "那像我这种还没进去的，是不是选哪个都错不了太多。", 134],
+            ["过来人", "回复楼上：25 岁选错几乎没有成本，35 岁选错基本没有退路。这道题的答案跟年龄强相关。", 367],
+            ["两地分居", "还有个没人提的变量：你另一半在哪。我身边因为这个问题散掉的比因为钱散掉的多。", 289],
+            ["务实派", "别把它想成不可逆。先在大厂攒三年本金和技能，再回去考，这条路比直接回去稳得多。", 312],
+            ["体制内十年", "这条我要泼点冷水：年龄限制卡得死，很多岗位 30 岁之后基本没机会了，「先攒几年再回」不是对所有岗位都成立。", 245],
+          ],
+        },
+      ],
+    },
+  };
+
+  // 能点开的 6 个问题（其余条目是演示桩）
+  const REAL_IDS = ["q1", "q2", "q3", "q4", "q5", "q6"];
+
+  // 推荐流：只有带 q 的那几条能点开，其余是演示桩
+  const FEED = [
+    { q: "q1" },
+    { q: "q3" },
+    { q: "q4" },
+    { q: "q2" },
+    { title: "为什么现在的地铁上，越来越多人不看手机了？",
+      excerpt: "最近通勤时观察到一个现象，车厢里盯着手机的人明显比前几年少，有人说是短视频让人疲劳了，也有人说是手机不好玩了。",
+      author: "通勤观察员", likes: 452, comments: 118 },
+    { q: "q5" },
+    { q: "q6" },
+    { title: "长期熬夜的人，身体是从哪个部位开始出问题的？",
+      excerpt: "连着熬了半年，最近明显感觉不对劲但又说不上哪里不对。想听听有过类似经历的过来人。",
+      author: "夜猫子", likes: 764, comments: 193 },
+  ];
+
+  // 热榜
+  const HOT = [
+    { q: "q1", heat: "812 万", tag: "科技" },
+    { title: "某地宣布中小学课间延长至 30 分钟，家长反应两极", heat: "736 万", tag: "教育" },
+    { q: "q3", heat: "655 万", tag: "职场" },
+    { title: "年轻人开始流行「三分钟热度」式健身，专家称比不动强", heat: "598 万", tag: "健康" },
+    { q: "q4", heat: "541 万", tag: "科技" },
+    { q: "q2", heat: "487 万", tag: "社会" },
+    { title: "为什么电影越来越长了？平均时长十年涨了 18 分钟", heat: "452 万", tag: "影视" },
+    { title: "一线城市房租连续三个月下降，房东开始主动降价", heat: "418 万", tag: "房产" },
+    { title: "有研究称每天走 8000 步收益最大，超过反而没用", heat: "386 万", tag: "健康" },
+    { title: "外卖平台试点「不需要餐具」默认勾选，塑料用量下降 3 成", heat: "352 万", tag: "环保" },
+    { q: "q5", heat: "321 万", tag: "职场" },
+    { title: "年轻人为什么开始重新用现金了？", heat: "298 万", tag: "社会" },
+    { title: "某高校开设「恋爱课」被抢爆，老师说第一课教的是沟通", heat: "276 万", tag: "教育" },
+    { title: "长时间戴耳机导致听力下降，20 岁人群检出率上升", heat: "251 万", tag: "健康" },
+    { title: "「预制菜进校园」争议后，多地开始要求明示菜品来源", heat: "233 万", tag: "社会" },
+    { title: "为什么现在的新游戏都不做单机剧情了？", heat: "210 万", tag: "游戏" },
+    { title: "上班摸鱼时到底该干点什么，才能不算浪费时间？", heat: "188 万", tag: "职场" },
+    { title: "城市里「付费自习室」悄悄变多，一小时 8 块钱值不值", heat: "167 万", tag: "社会" },
+    { q: "q6", heat: "149 万", tag: "职场" },
+    { title: "为什么越长大越难交到新朋友？", heat: "131 万", tag: "心理" },
+  ];
+
+  /* ═══════════ 路由 ═══════════ */
+  const NAV = [
+    { hash: "#/", label: "首页" },
+    { hash: "#/hot", label: "热榜" },
+    { hash: "#/discover", label: "发现" },
+    { hash: "#/vip", label: "会员" },
+  ];
+
+  function currentRoute() {
+    const h = location.hash || "#/";
+    const m = h.match(/^#\/q\/([^/?]+)/);
+    if (m) return { name: "question", id: m[1] };
+    if (h.startsWith("#/hot")) return { name: "hot" };
+    if (h.startsWith("#/discover")) return { name: "discover" };
+    if (h.startsWith("#/vip")) return { name: "vip" };
+    return { name: "home" };
+  }
+
+  function go(hash) { location.hash = hash; }
+
+  function markTabs(name) {
+    document.querySelectorAll("#zh-tabs a").forEach((a) => {
+      const r = a.getAttribute("data-route");
+      const active =
+        (r === "#/" && name === "home") ||
+        (r === "#/hot" && name === "hot") ||
+        (r === "#/discover" && name === "discover") ||
+        (r === "#/vip" && name === "vip");
+      a.classList.toggle("on", active);
+    });
+  }
+
+  /* ═══════════ 渲染：列表条目 ═══════════ */
+
+  function liveChip() { return `<span class="zh-badge-live">▶ 可点开</span>`; }
+
+  function feedCard(item) {
+    if (item.q) {
+      const Q = QUESTIONS[item.q];
+      const ans = Q.answers[0];
+      return `<div class="zh-card zh-card-pad">
+        <a class="feed-title" href="#/q/${item.q}">${liveChip()}${esc(Q.title)}</a>
+        <p class="feed-excerpt">${esc(ans.content.replace(/\n+/g, " "))}</p>
+        <div class="feed-author">${esc(ans.author)} · ${esc(ans.badge)}</div>
+        <div class="feed-actions">
+          <button class="zh-vote">▲ 赞同 ${ans.likes}</button>
+          <button class="zh-act">▼</button>
+          <button class="zh-act">💬 ${Q.answers.reduce((n, a) => n + a.comments.length, 0)} 条评论</button>
+          <button class="zh-act">⭐ 收藏</button>
+          <button class="zh-act">♥ 喜欢</button>
+          <button class="zh-act">↗ 分享</button>
+        </div>
+      </div>`;
+    }
+    return `<div class="zh-card zh-card-pad" data-stub="1">
+      <div class="feed-title">${esc(item.title)}</div>
+      <p class="feed-excerpt">${esc(item.excerpt)}</p>
+      <div class="feed-author">${esc(item.author)}</div>
+      <div class="feed-actions">
+        <button class="zh-vote">▲ 赞同 ${item.likes}</button>
+        <button class="zh-act">▼</button>
+        <button class="zh-act">💬 ${item.comments} 条评论</button>
+        <button class="zh-act">⭐ 收藏</button>
+        <button class="zh-act">♥ 喜欢</button>
+        <button class="zh-act">↗ 分享</button>
+      </div>
+    </div>`;
+  }
+
+  function hotRow(item, i) {
+    const cls = i < 3 ? "zh-rank top" : "zh-rank";
+    if (item.q) {
+      return `<div class="zh-hot-row" data-go="#/q/${item.q}">
+        <span class="${cls}">${i + 1}</span>
+        <div><div class="zh-hot-title">${liveChip()}${esc(QUESTIONS[item.q].title)}</div>
+        <div class="zh-hot-meta"><span class="zh-hot-heat">${esc(item.heat)}热度</span> · ${esc(item.tag)}</div></div>
+      </div>`;
+    }
+    return `<div class="zh-hot-row" data-stub="1">
+      <span class="${cls}">${i + 1}</span>
+      <div><div class="zh-hot-title">${esc(item.title)}</div>
+      <div class="zh-hot-meta"><span class="zh-hot-heat">${esc(item.heat)}热度</span> · ${esc(item.tag)}</div></div>
+    </div>`;
+  }
+
+  /* ═══════════ 渲染：整页 ═══════════ */
+
+  function renderHome() {
+    const content = `<div class="zh-card" style="padding:14px 20px;display:flex;gap:18px;font-size:14px;font-weight:600;color:#8590a6">
+        <span style="color:#0084ff">推荐</span><span>关注</span><span>热榜</span><span>视频</span>
+      </div>` + FEED.map(feedCard).join("");
+    const side = `
+      ${sideHot()}
+      <div class="zh-side-card">
+        <div class="zh-side-title">🔥 推荐关注</div>
+        <div class="zh-side-item">人工智能话题 <div class="zh-side-sub">32.4 万人关注</div></div>
+        <div class="zh-side-item">职场话题 <div class="zh-side-sub">58.1 万人关注</div></div>
+        <div class="zh-side-item">消费观察 <div class="zh-side-sub">9.7 万人关注</div></div>
+      </div>
+      <div class="zh-side-card">
+        <div class="zh-side-title">📌 演示说明</div>
+        <div class="zh-side-sub" style="line-height:1.8">
+          推荐流和热榜里绝大多数条目是占位内容，点开会有提示。<br>
+          带 <b style="color:#0066ff">▶ 可点开</b> 的 6 个问题才有真实数据，进去后右下角按钮可以跑 AI 分析。
+        </div>
+      </div>`;
+    paint(content, side);
+  }
+
+  function sideHot() {
+    return `<div class="zh-side-card">
+      <div class="zh-side-title">🔥 知乎热榜</div>
+      ${HOT.slice(0, 6).map((it, i) => {
+        const cls = i < 3 ? "zh-rank top" : "zh-rank";
+        const title = it.q ? QUESTIONS[it.q].title : it.title;
+        const go_ = it.q ? `data-go="#/q/${it.q}"` : `data-stub="1"`;
+        return `<div class="zh-hot-row" ${go_}><span class="${cls}">${i + 1}</span>
+          <div><div class="zh-hot-title">${esc(title)}</div>
+          <div class="zh-hot-meta"><span class="zh-hot-heat">${esc(it.heat)}</span></div></div></div>`;
+      }).join("")}
+      <div class="zh-side-item" data-go="#/hot" style="text-align:center;color:#0084ff;font-weight:600;border-bottom:none">查看完整热榜 ›</div>
+    </div>`;
+  }
+
+  function renderHot() {
+    const content = `<div class="zh-card">
+      <div class="zh-card-pad" style="border-bottom:1px solid #f0f0f0">
+        <div style="font-size:19px;font-weight:700">知乎热榜</div>
+        <div class="zh-side-sub" style="margin-top:4px">每 10 分钟更新一次 · 演示数据</div>
+      </div>
+      <div class="zh-card-pad" style="padding-top:4px;padding-bottom:4px">
+        ${HOT.map(hotRow).join("")}
+      </div>
+    </div>`;
+    const side = `${sideHot()}
+      <div class="zh-side-card">
+        <div class="zh-side-title">📊 榜单说明</div>
+        <div class="zh-side-sub" style="line-height:1.8">热度由浏览、回答、互动等多项指标加权得出，仅代表站内讨论热度。</div>
+      </div>`;
+    paint(content, side);
+  }
+
+  function renderDiscover() {
+    const content = `<div class="disc-grid">
+      <div class="disc-item"><h3>今天看什么</h3><p>每天一个值得展开聊的问题，已经更新到第 412 期。</p></div>
+      <div class="disc-item"><h3>圆桌讨论</h3><p>「AI 之后，我们还需要学什么」正在进行中，已有 128 位答主参与。</p></div>
+      <div class="disc-item"><h3>专栏推荐</h3><p>深度长文，通常 3000 字以上，适合通勤时慢慢读。</p></div>
+      <div class="disc-item"><h3>热门话题</h3><p>人工智能、职场、消费观察、心理健康、教育。</p></div>
+    </div>
+    <div class="zh-card" style="margin-top:10px">
+      <div class="zh-card-pad">
+        <div class="zh-side-title">🎯 编辑精选</div>
+        ${HOT.slice(0, 5).map((it, i) => {
+          const title = it.q ? QUESTIONS[it.q].title : it.title;
+          const go_ = it.q ? `data-go="#/q/${it.q}"` : `data-stub="1"`;
+          return `<div class="zh-side-item" ${go_}>${it.q ? liveChip() : ""}${esc(title)}</div>`;
+        }).join("")}
+      </div>
+    </div>`;
+    paint(content, sideHot());
+  }
+
+  function renderVip() {
+    const content = `<div class="vip-banner">
+        <h2>盐选会员</h2>
+        <p>解锁 10000+ 优质电子书、专栏与 Live 讲座<br>会员专属标识 · 评论区优先展示</p>
+      </div>
+      <div class="zh-card">
+        <div class="zh-card-pad">
+          <div class="zh-side-title">📚 会员推荐内容</div>
+          <div class="zh-side-item">《AI 时代的技术人成长路径》 <div class="zh-side-sub">专栏 · 24 讲 · 3.2 万人学过</div></div>
+          <div class="zh-side-item">《消费社会是如何形成的》 <div class="zh-side-sub">电子书 · 8.9 万字</div></div>
+          <div class="zh-side-item">《转行这件事，先想清楚这三件事》 <div class="zh-side-sub">Live 讲座 · 时长 92 分钟</div></div>
+        </div>
+      </div>`;
+    paint(content, sideHot());
+  }
+
+  function renderQuestion(id) {
+    const Q = QUESTIONS[id];
+    if (!Q) { renderNotFound(); return; }
+
+    const totalComments = Q.answers.reduce((n, a) => n + a.comments.length, 0);
+    let html = `<div class="zh-card zh-qhead">
+      <h1 class="QuestionHeader-title">${esc(Q.title)}</h1>
+      <div class="zh-qtags">
+        ${Q.topics.map((t) => `<span class="zh-tag">${esc(t)}</span>`).join("")}
+      </div>
+      <div class="zh-qbtns">
+        <button class="zh-btn-blue" data-stub="1">关注问题</button>
+        <button class="zh-btn-ghost" data-stub="1">写回答</button>
+        <button class="zh-btn-plain" data-stub="1">邀请回答</button>
+        <button class="zh-btn-plain" data-stub="1">好问题</button>
+        <button class="zh-btn-plain" data-stub="1">💬 添加评论</button>
+        <button class="zh-btn-plain" data-stub="1">⋯</button>
+      </div>
+      <div class="zh-bar">
+        <span><b>${Q.answers.length}</b> 个回答</span>
+        <span><b>${esc(Q.followers)}</b> 人关注</span>
+        <span><b>${esc(Q.views)}</b> 次浏览</span>
+      </div>
+    </div>`;
+
+    // AI 诊断卡先占位（点分析后才填内容），保证点下去立刻有反馈
+    html += `<div class="zx-diagnosis" id="zx-diag" hidden></div>`;
+
+    for (const a of Q.answers) {
+      html += `<div class="zh-card">
+        <div class="zh-card-pad" style="padding-bottom:6px">
+          <div class="zh-author">
+            <div class="zh-a-avatar">${esc(a.avatar)}</div>
+            <div class="zh-a-meta">
+              <div class="zh-a-name">${esc(a.author)}</div>
+              <div class="zh-a-badge">${esc(a.badge)}</div>
+            </div>
+          </div>
+          <div class="RichContent">${esc(a.content)}</div>
+          <div class="zh-actions">
+            <button class="zh-vote">▲ 赞同 ${a.likes}</button>
+            <button class="zh-vote-down">▼</button>
+            <button class="zh-act" data-stub="1">💬 添加评论</button>
+            <button class="zh-act" data-stub="1">⭐ 收藏</button>
+            <button class="zh-act" data-stub="1">♥ 喜欢</button>
+            <button class="zh-act" data-stub="1">↗ 分享</button>
+            <button class="zh-act" data-stub="1">⋯</button>
+          </div>
+        </div>
+        <div class="zh-card-pad" style="padding-top:0">
+          <div class="zh-cmt-count" style="border-top:1px solid #f0f0f0">评论 <span style="color:#8590a6;font-weight:400">${a.comments.length}</span></div>
+          <div class="CommentList">
+            ${a.comments.map((c, i) => {
+              const cid = `${a.id}-c${i + 1}`;
+              return `<div class="CommentItem" data-id="${cid}">
+                <div class="CommentItem-inner">
+                  <div class="CommentItem-avatar">${esc(c[0].slice(0, 1))}</div>
+                  <div class="CommentItem-main">
+                    <span class="CommentItem-author">${esc(c[0])}</span>
+                    <div class="CommentItem-text">${esc(c[1])}</div>
+                    <div class="CommentItem-footer">
+                      <button class="CommentItem-like">赞同<span class="CommentItem-likeCount">${c[2]}</span></button>
+                      <button class="CommentItem-like" data-stub="1">回复</button>
+                    </div>
+                  </div>
+                </div>
+              </div>`;
+            }).join("")}
+          </div>
+        </div>
+      </div>`;
+    }
+
+    const side = `
+      <div class="zh-side-card">
+        <div class="zh-side-title">📄 相关问题</div>
+        ${REAL_IDS.filter((k) => k !== id).map((k) =>
+          `<div class="zh-side-item" data-go="#/q/${k}">${liveChip()}${esc(QUESTIONS[k].title)}</div>`).join("")}
+        <div class="zh-side-item" data-stub="1">程序员转行能做什么？</div>
+        <div class="zh-side-item" data-stub="1">人工智能会先取代哪些职业？</div>
+      </div>
+      ${sideHot()}
+      <div class="zh-side-card">
+        <div class="zh-side-title">⚔️ 这个页面能做什么</div>
+        <div class="zh-side-sub" style="line-height:1.9">
+          右下角蓝色按钮展开 4 个功能：<br>
+          · 分析评论区：逐条标立场 / 意思 / 推理链 / 逻辑漏洞<br>
+          · 立场比例条 + 争论焦点 + 相关帖子<br>
+          · 正文转思维导图<br>
+          · 写评论实时挑漏洞<br>
+          当前页共 <b>${totalComments}</b> 条评论可供分析。
+        </div>
+      </div>`;
+    paint(html, side);
+  }
+
+  function renderNotFound() {
+    paint(`<div class="zh-empty"><b>这个问题不存在</b>演示页只有 6 个问题有真实内容。
+      <div style="margin-top:14px"><button class="zh-btn-blue" data-go="#/">回到首页</button></div></div>`,
+      sideHot());
+  }
+
+  function paint(contentHtml, sideHtml) {
+    document.getElementById("zh-content").innerHTML = contentHtml;
+    document.getElementById("zh-side").innerHTML = sideHtml;
+    const r = currentRoute();
+    markTabs(r.name);
+    // 只有详情页才显示 AI 功能
+    document.getElementById("zx-fab").hidden = r.name !== "question";
+    window.scrollTo(0, 0);
+  }
+
+  /* ═══════════ 点击绑定（事件委托） ═══════════ */
+  document.addEventListener("click", (e) => {
+    const live = e.target.closest("[data-go]");
+    if (live) { go(live.getAttribute("data-go")); return; }
+
+    // 「赞同」按钮点一下变蓝，纯装饰
+    const vote = e.target.closest(".zh-vote");
+    if (vote) { vote.classList.toggle("on"); return; }
+
+    const stub = e.target.closest("[data-stub]");
+    if (stub) {
+      toast("这是演示桩 · 只有带 <b>▶ 可点开</b> 的 6 个问题有真实内容<br>去首页或热榜找找看");
+      return;
+    }
+  });
+
+  document.getElementById("zh-logo").onclick = () => go("#/");
+  document.getElementById("zh-ask").onclick = () => toast("演示页没接提问功能，右上角是装饰");
+  document.querySelector(".zh-me").onclick = () => toast("演示账号 · 没有登录流程");
+
+  const searchInput = document.getElementById("zh-q");
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const kw = searchInput.value.trim();
+    if (!kw) return;
+    const hit = Object.keys(QUESTIONS).find((k) => QUESTIONS[k].title.includes(kw));
+    if (hit) { go("#/q/" + hit); searchInput.value = ""; }
+    else toast(`演示页没接知乎搜索。<br>搜「AI」「消费」「转行」「面试」「体制内」能匹配到 6 个真实问题`);
+  });
+
+  window.addEventListener("hashchange", route);
+  function route() {
+    const r = currentRoute();
+    if (r.name === "question") renderQuestion(r.id);
+    else if (r.name === "hot") renderHot();
+    else if (r.name === "discover") renderDiscover();
+    else if (r.name === "vip") renderVip();
+    else renderHome();
+  }
+
+  /* ═══════════════════════════════════════════════
+     AI 功能（真实调用后端）
+     ═══════════════════════════════════════════════ */
+
+  function normalizeStance(s) {
+    const t = (s || "").toLowerCase();
+    if (/支持|赞成|同意|肯定|正方|agree|pro|support/.test(t)) return "agree";
+    if (/反对|驳斥|质疑|否定|反方|唱衰|oppose|con|against/.test(t)) return "oppose";
+    return "neutral";
+  }
+  // cls 必须和 CSS 里的 .zx-stance.agree 对上
+  function stanceMeta(s) {
+    const n = normalizeStance(s);
+    if (n === "agree") return { cls: "agree", ico: "🟢", label: "赞成" };
+    if (n === "oppose") return { cls: "oppose", ico: "🔴", label: "反对" };
+    return { cls: "neutral", ico: "🟡", label: "中立" };
+  }
+  function parseFlaw(str) {
+    const m = String(str).match(/^([^：:]+)[：:]\s*([\s\S]*)$/);
+    return m ? { name: m[1].trim(), desc: m[2].trim() } : { name: String(str), desc: "" };
+  }
+
+  function barHtml(stats) {
+    if (!stats) return "";
+    const agree = stats.agree ? stats.agree.count : 0;
+    const oppose = stats.oppose ? stats.oppose.count : 0;
+    const neutral = stats.neutral ? stats.neutral.count : 0;
+    const total = agree + oppose + neutral;
+    if (!total) return "";
+    const ap = Math.round((agree / total) * 100), op = Math.round((oppose / total) * 100);
+    const np = 100 - ap - op;
+    return `<div class="zx-stance-bar">
+      <div class="zx-stance-bar-in">
+        <div class="zx-stance-seg agree" style="width:${ap}%"></div>
+        <div class="zx-stance-seg neutral" style="width:${np}%"></div>
+        <div class="zx-stance-seg oppose" style="width:${op}%"></div>
+      </div>
+      <div class="zx-stance-labels">
+        <span>🟢 赞成 ${agree}（${ap}%）</span>
+        <span>🟡 中立 ${neutral}（${np}%）</span>
+        <span>🔴 反对 ${oppose}（${op}%）</span>
+      </div>
+    </div>`;
+  }
+
+  function relatedHtml(posts) {
+    if (!posts || !posts.length) return "";
+    return `<div class="zx-related"><div class="zx-related-title">🔗 相关帖子推荐</div>` +
+      posts.map((p) => {
+        const t = p.url
+          ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>`
+          : esc(p.title);
+        return `<div class="zx-related-item">📄 ${t} <span>— ${esc(p.reason || "")}</span></div>`;
+      }).join("") + `</div>`;
+  }
+
+  /* ── 争议地图渲染 ──
+     配色和导图分支一一对应：比例条第 i 段的颜色 == 阵营卡左侧条 == 导图第 i 个分支。 */
+  const ZC_COLORS = ["#4361ee", "#e63946", "#2a9d8f", "#e76f51",
+                     "#7b2cbf", "#0096c7", "#d62828", "#2d6a4f"];
+  function zcColor(i) { return ZC_COLORS[i % ZC_COLORS.length]; }
+
+  function campsBarHtml(camps) {
+    if (!camps || !camps.length) return "";
+    const segs = camps.map((c, i) =>
+      `<div class="zc-seg" style="width:${(c.ratio * 100).toFixed(1)}%;background:${zcColor(i)}" title="${esc(c.name)}"></div>`
+    ).join("");
+    const legends = camps.map((c, i) =>
+      `<span class="zc-legend"><i style="background:${zcColor(i)}"></i>${esc(c.name)}
+        <b style="color:#8590a6;font-weight:400">${Math.round(c.ratio * 100)}%</b></span>`
+    ).join("");
+    return `<div class="zc-bar">${segs}</div><div class="zc-legends">${legends}</div>`;
+  }
+
+  function campsListHtml(camps) {
+    if (!camps || !camps.length) return "";
+    return camps.map((c, i) => {
+      const sm = stanceMeta(c.stance);
+      const grounds = (c.grounds || []).length
+        ? `<div class="zc-grounds">${c.grounds.map((g) => `<span class="zc-ground">${esc(g)}</span>`).join("")}</div>`
+        : "";
+      const q = c.quote;
+      const quote = q && q.text
+        ? `<div class="zc-quote">「${esc(q.text)}」<div class="zc-quote-who">— ${esc(q.author || "用户")}${
+            q.likes ? `，${q.likes} 赞` : ""}</div></div>`
+        : "";
+      return `<div class="zc-camp" style="border-left-color:${zcColor(i)}">
+        <div class="zc-camp-head"><span class="zc-camp-name">${esc(c.name)}</span>
+          <span class="zx-stance ${sm.cls}">${sm.label}</span>
+          <span class="zc-camp-size">${c.size} 条</span></div>
+        <div class="zc-camp-claim">${esc(c.claim)}</div>${grounds}${quote}</div>`;
+    }).join("");
+  }
+
+  function gemsHtml(gems) {
+    if (!gems || !gems.length) return "";
+    return `<div class="zc-sec">💎 被埋没的好评论</div>
+      <div class="zc-note" style="margin:-4px 0 8px">赞数低、排在后面，但内容质量明显高于平均 —— 知乎的排序容易把它们盖掉。</div>` +
+      gems.map((g) => `<div class="zc-gem">
+        <div class="zc-gem-meta"><span>第 ${g.floor} 楼</span><span>${g.likes || 0} 赞</span><span>${esc(g.author || "用户")}</span></div>
+        <div class="zc-gem-text">${esc(g.text)}</div>
+        <div class="zc-gem-why">为什么值得看：${esc(g.why)}</div></div>`).join("");
+  }
+
+  function cardEl(a) {
+    const sm = stanceMeta(a.stance);
+    const flaws = a.flaws || [];
+    const flawsHtml = flaws.length
+      ? `<div class="zx-flaws"><div class="zx-flaws-title">⚠ 逻辑漏洞</div>` +
+        flaws.map((f) => {
+          const p = parseFlaw(f);
+          return `<div class="zx-flaw"><span class="zx-flaw-badge">${esc(p.name)}</span><span class="zx-flaw-desc">${esc(p.desc)}</span></div>`;
+        }).join("") + `</div>`
+      : "";
+    const empty = !a.gist && !a.logic;
+    const body = empty
+      ? `<div class="zx-block-row" style="color:#8590a6">— 未分析 —</div>`
+      : `<div class="zx-block"><div class="zx-block-row"><b>想表达什么</b>${esc(a.gist)}</div></div>
+         <div class="zx-block"><div class="zx-block-row"><b>推理链</b>${esc(a.logic)}</div></div>${flawsHtml}`;
+    const host = document.createElement("div");
+    host.className = "zx-host";
+    host.innerHTML = `<div class="zx-card"><div class="zx-card-head">
+      <span class="zx-ai-chip">AI</span><span class="zx-brand">犀利评手 · 分析</span>
+      <span class="zx-stance ${sm.cls}">${sm.ico} ${sm.label}</span></div>${body}</div>`;
+    return host;
+  }
+
+  function scrapeComments() {
+    const out = [], seen = new Set();
+    for (const el of document.querySelectorAll(".CommentItem")) {
+      const id = el.getAttribute("data-id");
+      const textEl = el.querySelector(".CommentItem-text");
+      if (!id || !textEl || seen.has(id)) continue;
+      seen.add(id);
+      const likesEl = el.querySelector(".CommentItem-likeCount");
+      out.push({ id, text: textEl.textContent.trim(), likes: likesEl ? parseInt(likesEl.textContent, 10) || 0 : 0 });
+    }
+    return out;
+  }
+
+  async function streamAnalyze(comments, onEvent, model) {
+    const parts = [];
+    if (model) parts.push("model=" + encodeURIComponent(model));
+    if (FORCE) parts.push(FORCE.slice(1));
+    const qs = parts.length ? "?" + parts.join("&") : "";
+    const resp = await fetch(API + "/api/analyze/stream" + qs, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comments }),
+    });
+    if (!resp.ok) throw new Error("后端 HTTP " + resp.status);
+    if (!resp.body || !resp.body.getReader) throw new Error("这个浏览器读不了流");
+
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder("utf-8");
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const raw = buf.slice(0, idx).replace(/\r/g, "");
+        buf = buf.slice(idx + 2);
+        let name = "message", data = "";
+        for (const line of raw.split("\n")) {
+          if (line.startsWith("event:")) name = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        let obj; try { obj = JSON.parse(data); } catch (e) { continue; }
+        onEvent(name, obj);
+      }
+    }
+  }
+
+  // ── 功能 1：分析评论区 ──
+  let analyzing = false;
+  async function analyze() {
+    if (analyzing) return;
+    const comments = scrapeComments();
+    if (!comments.length) { toast("这个页面没有可分析的评论"); return; }
+
+    analyzing = true;
+    const btn = document.getElementById("zx-act-analyze");
+    const old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "分析中…";
+
+    // 立刻把面板亮出来，别让用户盯着空白
+    document.querySelectorAll(".zx-host").forEach((n) => n.remove());
+    const diag = document.getElementById("zx-diag");
+    diag.hidden = false;
+    const title = (document.querySelector(".QuestionHeader-title") || {}).textContent || document.title;
+    diag.innerHTML = `<div class="zx-diag-head"><span class="zx-ai-chip">AI</span>
+        ⚔️ 争议地图 <span class="zx-src" id="zx-src">分析中</span></div>
+      <div class="zx-core" id="zx-core">正在读取这 ${comments.length} 条评论，划分阵营…</div>
+      <div id="zx-prog" class="zx-progress">已 0s</div>
+      <div id="zx-map" style="color:#8590a6;font-size:12.5px"></div>
+      <div id="zx-stats"></div>
+      <div id="zx-fold" class="zc-folder" hidden></div>`;
+    const coreEl = diag.querySelector("#zx-core");
+    const progEl = diag.querySelector("#zx-prog");
+    const srcEl = diag.querySelector("#zx-src");
+    const mapEl = diag.querySelector("#zx-map");
+    const statsEl = diag.querySelector("#zx-stats");
+    const foldEl = diag.querySelector("#zx-fold");
+    diag.scrollIntoView({ block: "nearest" });
+
+    const began = Date.now();
+    const timer = setInterval(() => {
+      if (!progEl.textContent.startsWith("✔")) {
+        progEl.textContent = `已 ${Math.round((Date.now() - began) / 1000)}s`;
+      }
+    }, 1000);
+
+    let got = 0;
+    try {
+      /* ── 第一步：争议地图。这是产品首屏 —— 阵营划分比逐条分析值钱得多。 ── */
+      const resp = await fetch(API + "/api/consensus" + FORCE, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, comments }),
+      });
+      if (!resp.ok) throw new Error("后端 HTTP " + resp.status);
+      const data = await resp.json();
+      const camps = data.camps || [];
+
+      const src = data._source || "";
+      srcEl.className = "zx-src " + src;
+      srcEl.textContent = src === "mock" ? "🚧 假数据" : (src === "cache" ? "📥 缓存" : "🔼 直答");
+      if (src === "mock" && data._error) {
+        mapEl.innerHTML = `<div style="background:#fef4e6;border:1px solid #fde68a;border-radius:6px;
+          padding:7px 9px;font-size:12px;color:#92400e">⚠️ 后端在用兜底假数据（${esc(data._error)}）</div>`;
+      }
+
+      coreEl.innerHTML = `${esc(data.core_dispute || "")}` +
+        (data.crux ? `<div class="zc-note" style="margin-top:6px">分歧根源：${esc(data.crux)}</div>` : "");
+
+      mapEl.innerHTML =
+        `<div class="zc-sec">⚖️ 阵营分布
+           <span style="font-weight:400;color:#8590a6;font-size:11.5px">
+             共读 ${data._total || comments.length} 条，抽样 ${data._analyzed || comments.length} 条</span></div>` +
+        campsBarHtml(camps) + campsListHtml(camps) +
+        gemsHtml(data.buried_gems) +
+        (data.mindmap
+          ? `<div class="zc-sec">🧠 争议图谱</div><div class="zx-tree">${`<ul>${treeHtml(data.mindmap, 0)}</ul>`}</div>`
+          : "") +
+        relatedHtml(data.related_posts);
+
+      progEl.textContent = `✔ 争议地图完成 · ${camps.length} 个阵营 · 已 ${Math.round((Date.now() - began) / 1000)}s`;
+
+      /* ── 第二步：逐条分析，降级成「展开看细节」。 ── */
+      if (comments.length) {
+        foldEl.hidden = false;
+        foldEl.innerHTML = `<button class="zx-btn zx-btn-ghost" id="zx-fold-btn">
+          🔍 展开逐条分析（${comments.length} 条）</button>
+          <span style="font-size:11.5px;color:#8590a6;margin-left:8px">立场 / 意思 / 逻辑 / 漏洞</span>`;
+        foldEl.querySelector("#zx-fold-btn").onclick = () => {
+          foldEl.querySelector("#zx-fold-btn").disabled = true;
+          foldEl.querySelector("#zx-fold-btn").textContent = "逐条分析中…";
+          runPerComment(comments, foldEl);
+        };
+      }
+    } catch (e) {
+      progEl.innerHTML = `<span style="color:#b91c1c">✕ 出错：${esc(e.message)}</span><br>
+        <span style="color:#8590a6">本地请确认后端已启动（start.bat）；线上请稍后重试。</span>`;
+      mapEl.innerHTML = `<div style="color:#8590a6;font-size:12.5px">
+        后端没接上，也没有降到假数据。确认 <b>http://localhost:8000/api/health</b> 能打开。</div>`;
+    } finally {
+      clearInterval(timer);
+      analyzing = false;
+      btn.disabled = false;
+      btn.textContent = old;
+    }
+  }
+
+  /* 逐条分析：流式把卡片贴到每条评论下面（首屏之后才跑） */
+  async function runPerComment(comments, foldEl) {
+    const statsEl = document.getElementById("zx-stats");
+    const status = foldEl.querySelector("#zx-fold-btn");
+    let got = 0;
+    const place = (a) => {
+      const host = document.querySelector(`.CommentItem[data-id="${CSS.escape(String(a.id))}"]`);
+      if (!host || host.querySelector(".zx-host")) return false;
+      host.appendChild(cardEl(a));
+      return true;
+    };
+    const onEvent = (name, obj) => {
+      if (name === "analysis") {
+        if (place(obj)) got++;
+        status.textContent = `逐条分析中… ${got} / ${comments.length}`;
+      } else if (name === "done") {
+        status.textContent = `✔ 逐条分析完成（${got} 条）`;
+        if (statsEl) statsEl.innerHTML = barHtml(obj.stats);
+      } else if (name === "error") {
+        status.textContent = `✕ 逐条分析出错：${obj.message || ""}`;
+      }
+    };
+    try {
+      // 首批走快模型：thinking 得把整批「想」完才吐第一条，首屏要干等
+      await streamAnalyze(comments, onEvent, "fast");
+      if (!got) throw new Error("流结束了但一条结果都没回来");
+    } catch (e) {
+      status.textContent = "流式没接上，退回整批分析…";
+      try {
+        const resp = await fetch(API + "/api/analyze", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ comments }),
+        });
+        if (!resp.ok) throw new Error("后端 HTTP " + resp.status);
+        const data = await resp.json();
+        for (const a of data.analyses || []) { if (place(a)) got++; }
+        if (statsEl) statsEl.innerHTML = barHtml(data.stats);
+        status.textContent = `✔ 逐条分析完成（整批回退，${got} 条）`;
+      } catch (e2) {
+        status.textContent = `✕ 逐条分析出错：${e2.message}`;
+      }
+    }
+  }
+
+  /* ── 抽屉通用 ── */
+  let drawerEl = null, maskEl = null;
+  function openDrawer(html) {
+    closeDrawer();
+    maskEl = document.createElement("div");
+    maskEl.className = "zx-drawer-mask";
+    maskEl.onclick = closeDrawer;
+    drawerEl = document.createElement("div");
+    drawerEl.className = "zx-drawer";
+    drawerEl.innerHTML = html;
+    document.body.appendChild(maskEl);
+    document.body.appendChild(drawerEl);
+    const c = drawerEl.querySelector(".zr-close");
+    if (c) c.onclick = closeDrawer;
+    return drawerEl;
+  }
+  function closeDrawer() {
+    if (drawerEl) { drawerEl.remove(); drawerEl = null; }
+    if (maskEl) { maskEl.remove(); maskEl = null; }
+  }
+
+  /* ── 功能 2：思维导图（真树 + 连接线） ── */
+  function treeHtml(node, depth) {
+    const kids = node && node.children ? node.children : [];
+    const cls = depth === 0 ? "root" : depth === 1 ? "l1" : "";
+    const label = `<span class="zx-node ${cls}">${esc(node && node.name ? node.name : "")}</span>`;
+    if (!kids.length) return `<li>${label}</li>`;
+    return `<li>${label}<ul>${kids.map((c) => treeHtml(c, depth + 1)).join("")}</ul></li>`;
+  }
+
+  async function mindmap() {
+    const richEl = document.querySelector(".RichContent");
+    const content = richEl ? richEl.textContent.replace(/\s+/g, " ").trim().slice(0, 3000) : "";
+    const titleEl = document.querySelector(".QuestionHeader-title");
+    const title = titleEl ? titleEl.textContent.trim() : "";
+    if (!content) { toast("这个页面没识别到正文"); return; }
+
+    const d = openDrawer(`<div class="zr-head">🧠 思维导图 <button class="zr-close">✕</button></div>
+      <div class="zr-count">${esc(title)}</div>
+      <div class="zr-count" id="zx-mm-prog">正在把正文拆成结构…</div>
+      <div class="zx-tree" id="zx-mm-body" style="color:#8590a6"></div>`);
+    const prog = d.querySelector("#zx-mm-prog");
+    const body = d.querySelector("#zx-mm-body");
+    const began = Date.now();
+    const timer = setInterval(() => {
+      prog.textContent = `正在把正文拆成结构… 已 ${Math.round((Date.now() - began) / 1000)}s`;
+    }, 1000);
+
+    try {
+      const resp = await fetch(API + "/api/mindmap", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, content }),
+      });
+      if (!resp.ok) throw new Error("后端 HTTP " + resp.status);
+      const data = await resp.json();
+      clearInterval(timer);
+      prog.innerHTML = `数据来源：${esc(data._source || "未知")}`
+        + (data._error ? ` · <span style="color:#b91c1c">降级原因：${esc(data._error)}</span>` : "");
+      body.style.color = "";
+      body.innerHTML = data.mindmap
+        ? `<ul>${treeHtml(data.mindmap, 0)}</ul>`
+        : `<span style="color:#8590a6">没有拿到导图数据</span>`;
+    } catch (e) {
+      clearInterval(timer);
+      prog.innerHTML = `<span style="color:#b91c1c">✕ 出错：${esc(e.message)}</span>`;
+    }
+  }
+
+  /* ── 功能 3：写评论实时润色 ── */
+  let polishTimer = null;
+  function polishDrawer(prefill) {
+    const d = openDrawer(`<div class="zr-head">✍️ 写评论 · 实时检测 <button class="zr-close">✕</button></div>
+      <textarea class="zr-draft" placeholder="在这里写你的评论…&#10;停 1.5 秒，AI 会自动概括你的观点、挑出逻辑漏洞，并找出相关讨论。">${esc(prefill || "")}</textarea>
+      <div class="zr-bar"><label><input type="checkbox" id="zx-realtime" checked> 实时检测</label>
+        <span>停顿 1.5 秒自动分析</span></div>
+      <div id="zx-polish-out" style="color:#8590a6">输入评论，AI 会概括观点、挑出逻辑漏洞，并找出相关讨论。</div>`);
+    const ta = d.querySelector(".zr-draft");
+    ta.addEventListener("input", () => {
+      if (!d.querySelector("#zx-realtime").checked) return;
+      clearTimeout(polishTimer);
+      polishTimer = setTimeout(() => runPolish(d), 1500);
+    });
+    d.querySelector("#zx-realtime").addEventListener("change", (e) => {
+      if (e.target.checked && ta.value.trim()) runPolish(d);
+    });
+    ta.focus();
+    if (prefill && prefill.trim()) runPolish(d);
+  }
+
+  /* 两个接口并行发：
+        /api/related 只搜不调模型，约 1 秒 → 先把相关帖子铺出来
+        /api/polish  要调模型 5 秒多 → 逻辑漏洞晚几秒填进来
+     串着跑的话用户 6 秒内什么都看不到，「实时」就不成立了。 */
+  async function runPolish(d) {
+    const ta = d.querySelector(".zr-draft");
+    const out = d.querySelector("#zx-polish-out");
+    const draft = (ta.value || "").trim();
+    const EMPTY = "输入评论，AI 会概括观点、挑出逻辑漏洞，并找出相关讨论。";
+    if (!draft) { out.style.color = "#8590a6"; out.textContent = EMPTY; return; }
+    out.style.color = "";
+    out.innerHTML = `<div class="zr-p-loading">检测中…</div>
+      <div class="zr-related-slot"><div class="zr-p-loading" style="font-size:11.5px">正在找相关讨论…</div></div>`;
+
+    const post = (path) => fetch(API + path + FORCE, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draft }),
+    });
+
+    // 相关讨论先到就先渲染；万一模型先回来把整块重写了，下面用 relHtml 补回去
+    let relHtml = null;
+    const paintRelated = () => {
+      const slot = out.querySelector(".zr-related-slot");
+      if (slot && relHtml !== null) slot.innerHTML = relHtml;
+    };
+
+    // ① 相关讨论：先回先渲染，不等模型
+    post("/api/related").then((r) => (r.ok ? r.json() : null)).then((rel) => {
+      const posts = (rel && rel.related_posts) || [];
+      relHtml = posts.length
+        ? `<div class="zc-sec" style="margin:12px 0 6px">🔗 相关讨论</div>` + posts.map((p) => {
+            const t = p.url
+              ? `<a href="${esc(p.url)}" target="_blank" rel="noopener" style="color:#0066ff;text-decoration:none">${esc(p.title)}</a>`
+              : esc(p.title);
+            return `<div class="zr-related-item">📄 ${t}${
+              p.reason ? `<div class="zr-related-reason">${esc(p.reason)}</div>` : ""}</div>`;
+          }).join("")
+        : `<div class="zr-p-loading" style="font-size:11.5px">没搜到相关讨论</div>`;
+      paintRelated();
+    }).catch(() => {
+      relHtml = `<div class="zr-p-loading" style="font-size:11.5px">相关讨论暂时取不到</div>`;
+      paintRelated();
+    });
+
+    // ② 观点 + 漏洞：慢的那半，回来后再补上
+    try {
+      const resp = await post("/api/polish");
+      if (!resp.ok) throw new Error("后端 HTTP " + resp.status);
+      const data = await resp.json();
+      const flaws = (data.flaws || []).map((f) => `<div class="zr-p-flaw">
+        <div class="zr-pf-name">⚠ ${esc(f.name)}</div>
+        <div class="zr-pf-claim">问题点：${esc(f.claim)}</div>
+        <div class="zr-pf-why">原因：${esc(f.why)}</div></div>`).join("") ||
+        `<div class="zr-p-ok">✔ 没挑出明显的逻辑漏洞</div>`;
+      out.innerHTML =
+        (data.viewpoint ? `<div class="zr-viewpoint"><b>你想说</b>${esc(data.viewpoint)}</div>` : "") +
+        `<div class="zr-verdict"><b>判断：</b>${esc(data.verdict)}</div>` + flaws +
+        `<div class="zr-related-slot"></div>`;
+      paintRelated();
+    } catch (e) {
+      out.innerHTML = `<span style="color:#b91c1c">✕ 分析失败：${esc(e.message)}</span>
+        <div class="zr-related-slot"></div>`;
+      paintRelated();
+    }
+  }
+
+  /* ── 功能 4：知乎故事 / 知识 ── */
+  async function stories() {
+    const d = openDrawer(`<div class="zr-head">📚 知乎故事 / 知识 <button class="zr-close">✕</button></div>
+      <div class="zr-count" id="zx-st-prog">加载中…</div><div id="zx-st-list"></div>`);
+    const prog = d.querySelector("#zx-st-prog");
+    const list = d.querySelector("#zx-st-list");
+    try {
+      const [s, k] = await Promise.all([
+        fetch(API + "/api/stories").then((r) => r.json()),
+        fetch(API + "/api/knowledge").then((r) => r.json()),
+      ]);
+      const pick = (x) => (x && (x.data || x.items)) || [];
+      const sItems = Array.isArray(pick(s)) ? pick(s) : [];
+      const kItems = Array.isArray(pick(k)) ? pick(k) : [];
+      if (!sItems.length && !kItems.length) {
+        prog.innerHTML = `<span style="color:#b91c1c">✕ 没拿到数据</span>`
+          + (s && s.error ? ` · ${esc(s.error)}` : (k && k.error ? ` · ${esc(k.error)}` : ""));
+        return;
+      }
+      prog.textContent = `知乎故事 ${sItems.length} 条 · 知乎知识 ${kItems.length} 条`;
+      const row = (it) => `<div class="zr-item" data-wid="${esc(it.work_id || it.id || "")}">
+        <div class="zr-item-t">${esc(it.title || "")}</div>
+        <div class="zr-item-d">${esc(it.description || it.introduction || "")}</div></div>`;
+      list.innerHTML = (sItems.length ? `<div class="zr-count" style="margin-top:10px">📖 知乎故事</div>` + sItems.map(row).join("") : "")
+        + (kItems.length ? `<div class="zr-count" style="margin-top:14px">📚 知乎知识</div>` + kItems.map(row).join("") : "");
+      list.querySelectorAll("[data-wid]").forEach((el) => {
+        el.onclick = () => openStory(d, el.getAttribute("data-wid"));
+      });
+    } catch (e) {
+      prog.innerHTML = `<span style="color:#b91c1c">✕ 出错：${esc(e.message)}</span>`;
+    }
+  }
+
+  async function openStory(d, wid) {
+    if (!wid) return;
+    const list = d.querySelector("#zx-st-list");
+    const prog = d.querySelector("#zx-st-prog");
+    list.style.display = "none";
+    prog.textContent = "加载中…";
+    try {
+      const item = await (await fetch(API + "/api/story/" + encodeURIComponent(wid))).json();
+      const it = (item && (item.data || item)) || {};
+      const content = it.content || it.introduction || "";
+      d.querySelector(".zx-drawer, .zr-head");
+      const head = d.querySelector(".zr-head");
+      head.innerHTML = `📖 ${esc(it.chapter_name || it.title || "详情")} <button class="zr-close">✕</button>`;
+      head.querySelector(".zr-close").onclick = closeDrawer;
+      prog.innerHTML = it.author_name ? `作者：${esc(it.author_name)}` : "";
+      list.style.display = "";
+      list.innerHTML = `<div style="background:#fafafa;border-radius:8px;padding:12px;line-height:1.8;
+          max-height:45vh;overflow:auto">${esc(content)}</div>
+        <button class="zh-btn-blue" id="zx-st-mm" style="background:#00897b;margin-top:12px">🧠 生成思维导图</button>`;
+      list.querySelector("#zx-st-mm").onclick = async (e) => {
+        const b = e.target;
+        b.disabled = true; b.textContent = "生成中…";
+        try {
+          const resp = await fetch(API + "/api/mindmap", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: it.chapter_name || it.title || "", content }),
+          });
+          const data = await resp.json();
+          list.querySelector("#zx-st-mm").insertAdjacentHTML("afterend",
+            `<div class="zx-tree" style="margin-top:10px">${data.mindmap ? `<ul>${treeHtml(data.mindmap, 0)}</ul>` : "没有导图数据"}</div>`);
+          b.remove();
+        } catch (err) {
+          b.disabled = false; b.textContent = "🧠 生成思维导图";
+          prog.innerHTML = `<span style="color:#b91c1c">✕ 出错：${esc(err.message)}</span>`;
+        }
+      };
+    } catch (e) {
+      list.style.display = "";
+      prog.innerHTML = `<span style="color:#b91c1c">✕ 出错：${esc(e.message)}</span>`;
+    }
+  }
+
+  /* ═══════════ 启动 ═══════════ */
+  document.getElementById("zx-fab-main").onclick = () => {
+    document.getElementById("zx-fab").classList.toggle("open");
+  };
+  document.getElementById("zx-act-analyze").onclick = () => {
+    document.getElementById("zx-fab").classList.remove("open");
+    analyze();
+  };
+  document.getElementById("zx-act-mindmap").onclick = () => {
+    document.getElementById("zx-fab").classList.remove("open");
+    mindmap();
+  };
+  document.getElementById("zx-act-polish").onclick = () => {
+    document.getElementById("zx-fab").classList.remove("open");
+    polishDrawer("");
+  };
+  document.getElementById("zx-act-story").onclick = () => {
+    document.getElementById("zx-fab").classList.remove("open");
+    stories();
+  };
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeDrawer();
+      document.getElementById("zx-fab").classList.remove("open");
+    }
+  });
+
+  route();
+  // 从别的页面带着 hash 进来时兜底
+  if (!location.hash) location.replace("#/");
+})();
+</script>
+</body>
+</html>
