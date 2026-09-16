@@ -19,7 +19,12 @@ s = s.replace(old, new)
 # ngrok 免费版会给「浏览器发的 GET」插一页 You are about to visit 确认页
 # （POST/XHR 不受影响，但 /api/stories、/api/knowledge 这种 GET 会中招）。
 # ngrok-skip-browser-warning 是官方给的跳过头，包一层 fetch 统一带上。
-wrapper = '''
+#
+# 只在基址真是 ngrok 时才加。指向腾讯云云托管/自建服务时那个头没人看，
+# 留着只会让生成物里的注释对不上事实。
+wrapper = ""
+if "ngrok" in base:
+    wrapper = '''
   // GitHub Pages 版专用：页面在 github.io、API 在 ngrok，不同源。
   // ngrok 免费版会对浏览器发的 GET 插一页确认页（POST 不受影响），
   // 官方给的开关就是这个头。Api 之外的一律不碰。
