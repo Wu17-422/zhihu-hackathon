@@ -407,22 +407,7 @@ button{font-family:inherit}
   // 这一份托管在 GitHub Pages 上，页面和 API 不同源，必须写绝对地址。
   // 生成来源：backend/demo.html（那边是同源相对路径）。改完 demo.html 要重新生成，
   // 见 docs/README.md。
-  const API = "https://exorcism-irritably-stump.ngrok-free.dev";
-  // GitHub Pages 版专用：页面在 github.io、API 在 ngrok，不同源。
-  // ngrok 免费版会对浏览器发的 GET 插一页确认页（POST 不受影响），
-  // 官方给的开关就是这个头。Api 之外的一律不碰。
-  const _fetch = window.fetch.bind(window);
-  window.fetch = function (input, init) {
-    const url = typeof input === "string" ? input : ((input && input.url) || "");
-    if (url.indexOf(API) === 0) {
-      init = Object.assign({}, init);
-      const h = Object.assign({}, init.headers || {});
-      h["ngrok-skip-browser-warning"] = "1";
-      init.headers = h;
-    }
-    return _fetch(input, init);
-  };
-
+  const API = "https://backend-314091-9-1472846425.sh.run.tcloudbase.com";
 
   // 调样式又不想烧直答额度时，在控制台执行：localStorage.zhaMock = 1
   // 恢复真实调用：localStorage.removeItem("zhaMock")
