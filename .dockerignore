@@ -1,0 +1,30 @@
+# 构建上下文 = 仓库根目录（Dockerfile 在根目录，COPY backend/ ...）。
+# 这里挡的是「不该进镜像的东西」。
+#
+# 为什么第一条是 secret.txt：Dockerfile 里有 COPY backend/ .，不挡的话
+# 本地 docker build 会把凭证一起打进镜像层 —— 推到镜像仓库就等于泄露。
+# 提交前检查第 5 条要求凭证不得出现在代码仓库 / 前端响应 / 日志 / 截图 / 视频。
+# （从 Git 克隆构建时本来就没有这些文件，这条挡的是「本机 docker build」那条路。）
+
+# 凭证
+backend/secret.txt
+
+# 本地缓存，含真实知乎返回内容，没必要进镜像
+backend/cache.json
+
+# 演示视频，40MB
+backend/media/
+
+# Python 产物
+**/__pycache__/
+**/*.py[cod]
+
+# 跟后端无关的东西，别塞进构建上下文（Dockerfile 本来也不会拷，纯省传输量）
+extension/
+docs/
+.git/
+*.zip
+
+# 本地启动脚本，镜像里用不到
+backend/*.bat
+backend/*.ps1
