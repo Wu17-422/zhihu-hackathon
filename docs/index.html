@@ -1240,7 +1240,7 @@ button{font-family:inherit}
       progEl.innerHTML = `<span style="color:#b91c1c">✕ 出错：${esc(e.message)}</span><br>
         <span style="color:#8590a6">本地请确认后端已启动（start.bat）；线上请稍后重试。</span>`;
       mapEl.innerHTML = `<div style="color:#8590a6;font-size:12.5px">
-        后端没接上，也没有降到假数据。确认 <b>http://localhost:8000/api/health</b> 能打开。</div>`;
+        后端没接上，也没有降到假数据。确认 <b>${esc(API + "/api/health")}</b> 能打开。</div>`;
     } finally {
       clearInterval(timer);
       analyzing = false;
