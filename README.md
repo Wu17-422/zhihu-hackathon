@@ -14,8 +14,12 @@
 
 | 地址 | 说明 |
 |---|---|
-| **https://solutions-closes-governance-maryland.trycloudflare.com/demo** | 直接打开就能用，不用装任何东西 |
-| https://wu17-422.github.io/zhihu-hackathon/ | GitHub Pages 托管版（页面更稳，API 依赖上方隧道） |
+| **https://backend-314091-9-1472846425.sh.run.tcloudbase.com/demo** | 直接打开就能用，不用装任何东西 |
+| https://wu17-422.github.io/zhihu-hackathon/ | GitHub Pages 托管版（页面更稳，API 同上） |
+
+后端跑在**腾讯云开发云托管**上，地址固定、不依赖任何人的电脑开机。
+（早先提交用的 cloudflared 快速隧道 `solutions-closes-governance-maryland` 已失效 ——
+快速隧道每次启动随机分配子域名，旧的拿不回来，现已弃用。）
 
 Demo 是一个**复刻版的知乎单页应用**（首页 / 热榜 / 发现 / 会员 / 6 个能点开的问题详情页），
 右下角悬浮球就是全部 AI 功能的入口。
